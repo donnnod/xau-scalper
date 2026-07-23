@@ -12,6 +12,7 @@ import type * as ViktorSpacesEmail from "../ViktorSpacesEmail.js";
 import type * as auth from "../auth.js";
 import type * as constants from "../constants.js";
 import type * as crons from "../crons.js";
+import type * as forwardTest from "../forwardTest.js";
 import type * as http from "../http.js";
 import type * as liquiditySweep from "../liquiditySweep.js";
 import type * as macroCorrelation from "../macroCorrelation.js";
@@ -43,6 +44,7 @@ declare const fullApi: ApiFromModules<{
   auth: typeof auth;
   constants: typeof constants;
   crons: typeof crons;
+  forwardTest: typeof forwardTest;
   http: typeof http;
   liquiditySweep: typeof liquiditySweep;
   macroCorrelation: typeof macroCorrelation;

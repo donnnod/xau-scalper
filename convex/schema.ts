@@ -74,10 +74,14 @@ export default defineSchema({
         v.literal("dashboard"),
         v.literal("experimental"),
         v.literal("engine"),
+        v.literal("teo"),
       ),
     ),
     // Signal quality grade (A/B/C)
     grade: v.optional(v.string()),
+    // Teo forward-test metadata
+    teoScore: v.optional(v.number()),
+    teoRegime: v.optional(v.string()),
     // Trailing stop level (updated dynamically)
     trailingSL: v.optional(v.number()),
     // Journey tracking

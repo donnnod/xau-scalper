@@ -28,13 +28,45 @@ async function fetchBinancePrice(
   }
 }
 
+// ── Real macro data via Yahoo Finance (no API key needed) ──
+async function fetchYahooQuote(
+  symbol: string,
+): Promise<{ price: number; changePct: number } | null> {
+  try {
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=5d`;
+    const r = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" } });
+    if (!r.ok) return null;
+    const d = await r.json();
+    const meta = d?.chart?.result?.[0]?.meta;
+    if (!meta) return null;
+    return {
+      price: (meta.regularMarketPrice as number) ?? 0,
+      changePct: (meta.regularMarketChangePercent as number) ?? 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
 async function fetchMacroViaBinance() {
-  const [eurUsdt, paxg] = await Promise.all([
-    fetchBinancePrice("EURUSDT"),
+  const [yahooDxy, paxg] = await Promise.all([
+    fetchYahooQuote("DX-Y.NYB"),
     fetchBinancePrice("PAXGUSDT"),
   ]);
-  const dxyProxy = eurUsdt ? (1 / eurUsdt.price) * 100 : 104.5;
-  const dxyChange = eurUsdt ? -eurUsdt.changePct : 0;
+
+  let dxyProxy: number;
+  let dxyChange: number;
+
+  if (yahooDxy) {
+    dxyProxy = yahooDxy.price;
+    dxyChange = yahooDxy.changePct;
+  } else {
+    // Fallback: derive DXY proxy from EURUSDT (inverse relationship)
+    const eurUsdt = await fetchBinancePrice("EURUSDT");
+    dxyProxy = eurUsdt ? (1 / eurUsdt.price) * 100 : 104.5;
+    dxyChange = eurUsdt ? -eurUsdt.changePct : 0;
+  }
+
   return {
     dxyProxy,
     dxyChange,
@@ -47,6 +79,10 @@ async function fetchSPXProxy(): Promise<{
   price: number;
   change: number;
 } | null> {
+  // Try real SPX data from Yahoo Finance first
+  const yahooSpx = await fetchYahooQuote("%5EGSPC");
+  if (yahooSpx) return { price: yahooSpx.price, change: yahooSpx.changePct };
+  // Fallback: BTC/12 as a rough risk-sentiment proxy
   const btc = await fetchBinancePrice("BTCUSDT");
   if (!btc) return null;
   return { price: btc.price / 12, change: btc.changePct };
@@ -93,8 +129,11 @@ export const fetchMacroData = internalAction({
   args: {},
   handler: async ctx => {
     try {
-      const macroData = await fetchMacroViaBinance();
-      const spxData = await fetchSPXProxy();
+      const [macroData, spxData, yahooTnx] = await Promise.all([
+        fetchMacroViaBinance(),
+        fetchSPXProxy(),
+        fetchYahooQuote("%5ETNX"), // US 10-Year Treasury yield
+      ]);
       const goldChange = macroData.goldChange;
 
       const dxyDiv = detectDivergence(
@@ -104,8 +143,9 @@ export const fetchMacroData = internalAction({
       );
       const dxyCorr = calcCorrelation(goldChange, macroData.dxyChange, -1);
 
-      const us10yChange = macroData.dxyChange * 0.6;
-      const us10yPrice = 4.25 + us10yChange * 0.1;
+      // Real US 10Y yield from Yahoo; fall back to DXY-correlated proxy
+      const us10yPrice = yahooTnx?.price ?? 4.25 + macroData.dxyChange * 0.01;
+      const us10yChange = yahooTnx?.changePct ?? macroData.dxyChange * 0.6;
       const us10yDiv = detectDivergence(goldChange, us10yChange, "INVERSE");
       const us10yCorr = calcCorrelation(goldChange, us10yChange, -1);
 
