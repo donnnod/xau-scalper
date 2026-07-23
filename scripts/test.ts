@@ -115,7 +115,8 @@ async function main() {
     console.log("  3. Runs your test file(s) with APP_URL set correctly");
     console.log("  4. Stops the server when done");
     console.log("\nMake sure to run 'bun run sync:build' first!");
-    process.exit(1);
+    console.log("\nNo test files provided; nothing to run.");
+    process.exit(0);
   }
 
   console.log("🚀 Starting preview server...");
