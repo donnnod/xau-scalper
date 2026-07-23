@@ -1,5 +1,5 @@
-import { defineSchema, defineTable } from "convex/server";
 import { authTables } from "@convex-dev/auth/server";
+import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
 export default defineSchema({
@@ -64,7 +64,7 @@ export default defineSchema({
       v.literal("TP1_HIT"),
       v.literal("TP2_HIT"),
       v.literal("STOPPED"),
-      v.literal("EXPIRED")
+      v.literal("EXPIRED"),
     ),
     pnlPoints: v.optional(v.number()),
     resolvedAt: v.optional(v.number()),
@@ -73,8 +73,8 @@ export default defineSchema({
       v.union(
         v.literal("dashboard"),
         v.literal("experimental"),
-        v.literal("engine")
-      )
+        v.literal("engine"),
+      ),
     ),
     // Signal quality grade (A/B/C)
     grade: v.optional(v.string()),
@@ -87,8 +87,8 @@ export default defineSchema({
           event: v.string(),
           price: v.number(),
           timestamp: v.number(),
-        })
-      )
+        }),
+      ),
     ),
   })
     .index("by_created", ["createdAt"])
@@ -108,7 +108,7 @@ export default defineSchema({
       v.literal("EXPIRED"),
       v.literal("ENGINE_RUN"),
       v.literal("MONITOR_CHECK"),
-      v.literal("TRAIL_UPDATE")
+      v.literal("TRAIL_UPDATE"),
     ),
     ideaId: v.optional(v.id("tradingIdeas")),
     direction: v.optional(v.union(v.literal("LONG"), v.literal("SHORT"))),
@@ -134,7 +134,7 @@ export default defineSchema({
       v.literal("OPEN"),
       v.literal("WIN"),
       v.literal("LOSS"),
-      v.literal("BREAKEVEN")
+      v.literal("BREAKEVEN"),
     ),
     pnlPoints: v.optional(v.number()),
     pnlDollars: v.optional(v.number()),

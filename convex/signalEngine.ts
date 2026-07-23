@@ -4,9 +4,14 @@
  * Runs as Convex cron actions — fetches candles, runs analysis, generates signals.
  * Also monitors active ideas for SL/TP hits every minute.
  */
-import { internalAction, internalMutation, internalQuery } from "./_generated/server";
+
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
+import {
+  internalAction,
+  internalMutation,
+  internalQuery,
+} from "./_generated/server";
 
 // ─── Constants ───
 const BINANCE_API = "https://data-api.binance.vision/api/v3";
@@ -46,9 +51,14 @@ function calcRSI(closes: number[], period = 14): number[] {
     gains[i] = d > 0 ? d : 0;
     losses[i] = d < 0 ? -d : 0;
   }
-  let avgG = 0, avgL = 0;
-  for (let i = 1; i <= period; i++) { avgG += gains[i] || 0; avgL += losses[i] || 0; }
-  avgG /= period; avgL /= period;
+  let avgG = 0,
+    avgL = 0;
+  for (let i = 1; i <= period; i++) {
+    avgG += gains[i] || 0;
+    avgL += losses[i] || 0;
+  }
+  avgG /= period;
+  avgL /= period;
   rsi[period] = avgL === 0 ? 100 : 100 - 100 / (1 + avgG / avgL);
   for (let i = period + 1; i < closes.length; i++) {
     avgG = (avgG * (period - 1) + (gains[i] || 0)) / period;
@@ -63,7 +73,8 @@ function calcMACD(closes: number[]) {
   const slow = calcEMA(closes, 26);
   const macdLine: number[] = [];
   for (let i = 0; i < closes.length; i++) {
-    if (fast[i] !== undefined && slow[i] !== undefined) macdLine[i] = fast[i] - slow[i];
+    if (fast[i] !== undefined && slow[i] !== undefined)
+      macdLine[i] = fast[i] - slow[i];
   }
   const vals = macdLine.filter(v => v !== undefined);
   const sig = calcEMA(vals, 9);
@@ -90,7 +101,7 @@ function calcATR(candles: Candle[], period = 14): number[] {
     tr[i] = Math.max(
       candles[i].high - candles[i].low,
       Math.abs(candles[i].high - candles[i - 1].close),
-      Math.abs(candles[i].low - candles[i - 1].close)
+      Math.abs(candles[i].low - candles[i - 1].close),
     );
   }
   const atr: number[] = [];
@@ -106,7 +117,8 @@ function calcATR(candles: Candle[], period = 14): number[] {
 function calcStochastic(candles: Candle[], kPeriod = 14) {
   const k: number[] = [];
   for (let i = kPeriod - 1; i < candles.length; i++) {
-    let hi = -Infinity, lo = Infinity;
+    let hi = -Infinity,
+      lo = Infinity;
     for (let j = i - kPeriod + 1; j <= i; j++) {
       if (candles[j].high > hi) hi = candles[j].high;
       if (candles[j].low < lo) lo = candles[j].low;
@@ -140,7 +152,11 @@ function r2(n: number): number {
 }
 
 // ─── Signal Grading ───
-function gradeSignal(_confidence: number, extremeIndicators: number, totalStrength: number): "A" | "B" | "C" | "NO_TRADE" {
+function gradeSignal(
+  _confidence: number,
+  extremeIndicators: number,
+  totalStrength: number,
+): "A" | "B" | "C" | "NO_TRADE" {
   if (extremeIndicators >= 3 && totalStrength >= 70) return "A";
   if (extremeIndicators >= 2 && totalStrength >= 60) return "B";
   if (totalStrength >= 50) return "C";
@@ -179,20 +195,30 @@ function analyzeCandles(candles: Candle[]): {
 
   const currentATR = atr[last] ?? price * 0.002;
 
-  let bullScore = 0, bearScore = 0;
-  let extremeBull = 0, extremeBear = 0;
+  let bullScore = 0,
+    bearScore = 0;
+  let extremeBull = 0,
+    extremeBear = 0;
   const reasons: string[] = [];
 
   // EMA alignment
-  if (ema9[last] !== undefined && ema21[last] !== undefined && ema50[last] !== undefined) {
+  if (
+    ema9[last] !== undefined &&
+    ema21[last] !== undefined &&
+    ema50[last] !== undefined
+  ) {
     if (ema9[last] > ema21[last] && ema21[last] > ema50[last]) {
-      bullScore += 25; reasons.push("EMAs bullish");
+      bullScore += 25;
+      reasons.push("EMAs bullish");
     } else if (ema9[last] < ema21[last] && ema21[last] < ema50[last]) {
-      bearScore += 25; reasons.push("EMAs bearish");
+      bearScore += 25;
+      reasons.push("EMAs bearish");
     } else if (ema9[last] > ema21[last]) {
-      bullScore += 10; reasons.push("EMA 9>21");
+      bullScore += 10;
+      reasons.push("EMA 9>21");
     } else {
-      bearScore += 10; reasons.push("EMA 9<21");
+      bearScore += 10;
+      reasons.push("EMA 9<21");
     }
   }
 
@@ -205,18 +231,28 @@ function analyzeCandles(candles: Candle[]): {
   // RSI
   const lastRSI = rsi[last];
   if (lastRSI !== undefined) {
-    if (lastRSI < 30) { bullScore += 20; extremeBull++; reasons.push(`RSI oversold ${lastRSI.toFixed(0)}`); }
-    else if (lastRSI > 70) { bearScore += 20; extremeBear++; reasons.push(`RSI overbought ${lastRSI.toFixed(0)}`); }
-    else if (lastRSI > 50) bullScore += 5;
+    if (lastRSI < 30) {
+      bullScore += 20;
+      extremeBull++;
+      reasons.push(`RSI oversold ${lastRSI.toFixed(0)}`);
+    } else if (lastRSI > 70) {
+      bearScore += 20;
+      extremeBear++;
+      reasons.push(`RSI overbought ${lastRSI.toFixed(0)}`);
+    } else if (lastRSI > 50) bullScore += 5;
     else bearScore += 5;
   }
 
   // MACD
   if (histogram[last] !== undefined && histogram[last - 1] !== undefined) {
     if (histogram[last] > 0 && histogram[last - 1] <= 0) {
-      bullScore += 20; extremeBull++; reasons.push("MACD bull cross");
+      bullScore += 20;
+      extremeBull++;
+      reasons.push("MACD bull cross");
     } else if (histogram[last] < 0 && histogram[last - 1] >= 0) {
-      bearScore += 20; extremeBear++; reasons.push("MACD bear cross");
+      bearScore += 20;
+      extremeBear++;
+      reasons.push("MACD bear cross");
     } else if (histogram[last] > 0) {
       bullScore += 8;
     } else {
@@ -227,8 +263,15 @@ function analyzeCandles(candles: Candle[]): {
   // Stochastic
   const lastK = stoch.k[last];
   if (lastK !== undefined) {
-    if (lastK < 20) { bullScore += 15; extremeBull++; reasons.push("Stoch oversold"); }
-    else if (lastK > 80) { bearScore += 15; extremeBear++; reasons.push("Stoch overbought"); }
+    if (lastK < 20) {
+      bullScore += 15;
+      extremeBull++;
+      reasons.push("Stoch oversold");
+    } else if (lastK > 80) {
+      bearScore += 15;
+      extremeBear++;
+      reasons.push("Stoch overbought");
+    }
   }
 
   // Bollinger Bands
@@ -236,27 +279,42 @@ function analyzeCandles(candles: Candle[]): {
     const bbWidth = bb.upper[last] - bb.lower[last];
     const pricePos = (price - bb.lower[last]) / bbWidth; // 0 = lower band, 1 = upper band
     if (pricePos <= 0.05) {
-      bullScore += 18; extremeBull++; reasons.push("BB lower band touch");
+      bullScore += 18;
+      extremeBull++;
+      reasons.push("BB lower band touch");
     } else if (pricePos >= 0.95) {
-      bearScore += 18; extremeBear++; reasons.push("BB upper band touch");
+      bearScore += 18;
+      extremeBear++;
+      reasons.push("BB upper band touch");
     } else if (pricePos < 0.3) {
-      bullScore += 8; reasons.push("BB lower zone");
+      bullScore += 8;
+      reasons.push("BB lower zone");
     } else if (pricePos > 0.7) {
-      bearScore += 8; reasons.push("BB upper zone");
+      bearScore += 8;
+      reasons.push("BB upper zone");
     }
   }
 
   const total = bullScore + bearScore;
   if (total === 0) return null;
 
-  const biasStrength = Math.round((Math.abs(bullScore - bearScore) / total) * 100);
+  const biasStrength = Math.round(
+    (Math.abs(bullScore - bearScore) / total) * 100,
+  );
   const bias: "BULLISH" | "BEARISH" | "NEUTRAL" =
-    biasStrength < 15 ? "NEUTRAL" : bullScore > bearScore ? "BULLISH" : "BEARISH";
+    biasStrength < 15
+      ? "NEUTRAL"
+      : bullScore > bearScore
+        ? "BULLISH"
+        : "BEARISH";
 
   if (bias === "NEUTRAL") return null;
 
-  const direction = bias === "BULLISH" ? "LONG" as const : "SHORT" as const;
-  const confidence = Math.min(95, Math.round(Math.max(bullScore, bearScore) * 1.2));
+  const direction = bias === "BULLISH" ? ("LONG" as const) : ("SHORT" as const);
+  const confidence = Math.min(
+    95,
+    Math.round(Math.max(bullScore, bearScore) * 1.2),
+  );
 
   // Grade the signal
   const extremeCount = direction === "LONG" ? extremeBull : extremeBear;
@@ -271,13 +329,13 @@ function analyzeCandles(candles: Candle[]): {
   if (direction === "LONG") {
     sl = r2(price - currentATR * 1.5);
     const risk = price - sl;
-    tp1 = r2(price + risk * 1.2);  // Partial TP at 1.2R
-    tp2 = r2(price + risk * 2.5);  // Full TP at 2.5R
+    tp1 = r2(price + risk * 1.2); // Partial TP at 1.2R
+    tp2 = r2(price + risk * 2.5); // Full TP at 2.5R
   } else {
     sl = r2(price + currentATR * 1.5);
     const risk = sl - price;
-    tp1 = r2(price - risk * 1.2);  // Partial TP at 1.2R
-    tp2 = r2(price - risk * 2.5);  // Full TP at 2.5R
+    tp1 = r2(price - risk * 1.2); // Partial TP at 1.2R
+    tp2 = r2(price - risk * 2.5); // Full TP at 2.5R
   }
 
   return {
@@ -341,7 +399,7 @@ export const _logJournal = internalMutation({
       v.literal("EXPIRED"),
       v.literal("ENGINE_RUN"),
       v.literal("MONITOR_CHECK"),
-      v.literal("TRAIL_UPDATE")
+      v.literal("TRAIL_UPDATE"),
     ),
     ideaId: v.optional(v.id("tradingIdeas")),
     direction: v.optional(v.union(v.literal("LONG"), v.literal("SHORT"))),
@@ -377,15 +435,15 @@ export const _createSignal = internalMutation({
     // Check cooldown — don't create signal if same direction within cooldown
     const recent = await ctx.db
       .query("tradingIdeas")
-      .withIndex("by_source_created", (q) => q.eq("source", "engine"))
+      .withIndex("by_source_created", q => q.eq("source", "engine"))
       .order("desc")
       .take(5);
 
     const now = Date.now();
     const duplicate = recent.find(
-      (r) =>
+      r =>
         r.direction === args.direction &&
-        now - r.createdAt < SIGNAL_COOLDOWN_MS
+        now - r.createdAt < SIGNAL_COOLDOWN_MS,
     );
     if (duplicate) return null;
 
@@ -420,7 +478,7 @@ export const _updateIdeaJourney = internalMutation({
       v.literal("TP1_HIT"),
       v.literal("TP2_HIT"),
       v.literal("STOPPED"),
-      v.literal("EXPIRED")
+      v.literal("EXPIRED"),
     ),
     pnlPoints: v.number(),
     exitPrice: v.number(),
@@ -455,7 +513,7 @@ export const _addJourneyEvent = internalMutation({
       v.literal("TP1_HIT"),
       v.literal("TP2_HIT"),
       v.literal("STOPPED"),
-      v.literal("EXPIRED")
+      v.literal("EXPIRED"),
     ),
     event: v.string(),
     price: v.number(),
@@ -513,7 +571,7 @@ export const _updateTrailingSL = internalMutation({
 // ═══════════════════════════════════════
 export const generateSignals = internalAction({
   args: {},
-  handler: async (ctx) => {
+  handler: async ctx => {
     // Skip weekends (forex closed)
     const now = new Date();
     const day = now.getUTCDay();
@@ -542,8 +600,21 @@ export const generateSignals = internalAction({
         price,
         details: `5m: ${analysis5m?.bias ?? "N/A"} ${analysis5m?.grade ?? "-"} (${analysis5m?.confidence ?? 0}%) | 15m: ${analysis15m?.bias ?? "N/A"} ${analysis15m?.grade ?? "-"} (${analysis15m?.confidence ?? 0}%)`,
         metadata: JSON.stringify({
-          analysis5m: analysis5m ? { bias: analysis5m.bias, confidence: analysis5m.confidence, grade: analysis5m.grade, indicators: analysis5m.indicators } : null,
-          analysis15m: analysis15m ? { bias: analysis15m.bias, confidence: analysis15m.confidence, grade: analysis15m.grade } : null,
+          analysis5m: analysis5m
+            ? {
+                bias: analysis5m.bias,
+                confidence: analysis5m.confidence,
+                grade: analysis5m.grade,
+                indicators: analysis5m.indicators,
+              }
+            : null,
+          analysis15m: analysis15m
+            ? {
+                bias: analysis15m.bias,
+                confidence: analysis15m.confidence,
+                grade: analysis15m.grade,
+              }
+            : null,
         }),
       });
 
@@ -562,24 +633,29 @@ export const generateSignals = internalAction({
         : analysis5m.confidence;
 
       // Upgrade grade if 15m confirms
-      const finalGrade = analysis15m && analysis5m.grade === "B" && analysis15m.grade === "A"
-        ? "A" : analysis5m.grade;
+      const finalGrade =
+        analysis15m && analysis5m.grade === "B" && analysis15m.grade === "A"
+          ? "A"
+          : analysis5m.grade;
 
       // Create the signal
-      const ideaId = await ctx.runMutation(internal.signalEngine._createSignal, {
-        direction: analysis5m.direction,
-        entryPrice: analysis5m.entryPrice,
-        stopLoss: analysis5m.stopLoss,
-        tp1: analysis5m.tp1,
-        tp2: analysis5m.tp2,
-        confidence: finalConfidence,
-        reason: `[ENGINE] ${analysis5m.reason}${analysis15m ? " · 15m confirms" : ""}`,
-        timeframe: analysis15m ? "5m+15m" : "5m",
-        bias: analysis5m.bias,
-        biasStrength: analysis5m.biasStrength,
-        spotPrice: price,
-        grade: finalGrade,
-      });
+      const ideaId = await ctx.runMutation(
+        internal.signalEngine._createSignal,
+        {
+          direction: analysis5m.direction,
+          entryPrice: analysis5m.entryPrice,
+          stopLoss: analysis5m.stopLoss,
+          tp1: analysis5m.tp1,
+          tp2: analysis5m.tp2,
+          confidence: finalConfidence,
+          reason: `[ENGINE] ${analysis5m.reason}${analysis15m ? " · 15m confirms" : ""}`,
+          timeframe: analysis15m ? "5m+15m" : "5m",
+          bias: analysis5m.bias,
+          biasStrength: analysis5m.biasStrength,
+          spotPrice: price,
+          grade: finalGrade,
+        },
+      );
 
       if (ideaId) {
         await ctx.runMutation(internal.signalEngine._logJournal, {
@@ -602,7 +678,7 @@ export const generateSignals = internalAction({
 // ═══════════════════════════════════════
 export const monitorIdeas = internalAction({
   args: {},
-  handler: async (ctx) => {
+  handler: async ctx => {
     // Skip weekends
     const now = new Date();
     const day = now.getUTCDay();
@@ -627,7 +703,7 @@ export const monitorIdeas = internalAction({
       // Get all active ideas
       const activeIdeas = await ctx.runQuery(
         internal.signalEngine._getActiveIdeas,
-        {}
+        {},
       );
 
       if (!activeIdeas || activeIdeas.length === 0) return;
@@ -642,7 +718,11 @@ export const monitorIdeas = internalAction({
         const slHit = isLong ? price <= effectiveSL : price >= effectiveSL;
         if (slHit) {
           hits++;
-          const pnl = r2(isLong ? effectiveSL - idea.entryPrice : idea.entryPrice - effectiveSL);
+          const pnl = r2(
+            isLong
+              ? effectiveSL - idea.entryPrice
+              : idea.entryPrice - effectiveSL,
+          );
 
           await ctx.runMutation(internal.signalEngine._updateIdeaJourney, {
             id: idea._id,
@@ -667,7 +747,9 @@ export const monitorIdeas = internalAction({
           const tp2Hit = isLong ? price >= idea.tp2 : price <= idea.tp2;
           if (tp2Hit) {
             hits++;
-            const pnl = r2(isLong ? idea.tp2 - idea.entryPrice : idea.entryPrice - idea.tp2);
+            const pnl = r2(
+              isLong ? idea.tp2 - idea.entryPrice : idea.entryPrice - idea.tp2,
+            );
 
             await ctx.runMutation(internal.signalEngine._updateIdeaJourney, {
               id: idea._id,
@@ -694,7 +776,8 @@ export const monitorIdeas = internalAction({
               ? r2(price - trailDistance)
               : r2(price + trailDistance);
 
-            const currentTrailSL = idea.trailingSL ?? (isLong ? idea.entryPrice : idea.entryPrice);
+            const currentTrailSL =
+              idea.trailingSL ?? (isLong ? idea.entryPrice : idea.entryPrice);
 
             // Only update if trailing SL improved (moved in favorable direction)
             const shouldUpdate = isLong
@@ -716,7 +799,9 @@ export const monitorIdeas = internalAction({
           const tp1Hit = isLong ? price >= idea.tp1 : price <= idea.tp1;
           if (tp1Hit) {
             hits++;
-            const pnl = r2(isLong ? idea.tp1 - idea.entryPrice : idea.entryPrice - idea.tp1);
+            const pnl = r2(
+              isLong ? idea.tp1 - idea.entryPrice : idea.entryPrice - idea.tp1,
+            );
 
             // Move to TP1_HIT status and set trailing SL to breakeven
             await ctx.runMutation(internal.signalEngine._addJourneyEvent, {
@@ -742,7 +827,9 @@ export const monitorIdeas = internalAction({
           const tp2Hit = isLong ? price >= idea.tp2 : price <= idea.tp2;
           if (tp2Hit) {
             hits++;
-            const pnl = r2(isLong ? idea.tp2 - idea.entryPrice : idea.entryPrice - idea.tp2);
+            const pnl = r2(
+              isLong ? idea.tp2 - idea.entryPrice : idea.entryPrice - idea.tp2,
+            );
 
             await ctx.runMutation(internal.signalEngine._updateIdeaJourney, {
               id: idea._id,
@@ -759,7 +846,6 @@ export const monitorIdeas = internalAction({
               price: idea.tp2,
               details: `${idea.direction} TP2 (gap) @ ${idea.tp2.toFixed(2)} | Entry: ${idea.entryPrice.toFixed(2)} | P&L: +${pnl} pts`,
             });
-            continue;
           }
         }
       }
@@ -781,15 +867,15 @@ export const monitorIdeas = internalAction({
 // ─── Internal query: get active ideas ───
 export const _getActiveIdeas = internalQuery({
   args: {},
-  handler: async (ctx) => {
+  handler: async ctx => {
     // Get both ACTIVE and TP1_HIT (still tracking toward TP2)
     const active = await ctx.db
       .query("tradingIdeas")
-      .withIndex("by_status", (q) => q.eq("status", "ACTIVE"))
+      .withIndex("by_status", q => q.eq("status", "ACTIVE"))
       .collect();
     const tp1Hit = await ctx.db
       .query("tradingIdeas")
-      .withIndex("by_status", (q) => q.eq("status", "TP1_HIT"))
+      .withIndex("by_status", q => q.eq("status", "TP1_HIT"))
       .collect();
     return [...active, ...tp1Hit];
   },
