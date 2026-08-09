@@ -83,8 +83,8 @@ tested; the trades to feed it do not exist yet.
              │                          ▼
 ┌────────────────────────┐      data-api.binance.vision
 │  teo/  (Python)        │      query1.finance.yahoo.com
-│  forecasting, sweeps,  │      (keyless, no account)
-│  self-heal proposals   │
+│  Kronos forecasting    │      (keyless, no account)
+│  — optional sidecar    │
 └────────────────────────┘
 ```
 
@@ -105,8 +105,8 @@ a price that never existed.
 | `server/intel/` | Regime, macro correlation, news calendar, liquidity sweeps. |
 | `src/` | React UI (Vite, Tailwind, shadcn/ui). |
 | `scripts/` | Backtest, batch scorer, edge audit. |
-| `teo/` | Python sidecar: Kronos forecasting, parameter sweeps, self-heal. |
-| `tests/`, `core/__tests__/`, `server/__tests__/` | 294 TypeScript + 89 Python tests. |
+| `teo/` | Python sidecar — **Kronos forecasting only**. Nothing that decides a trade lives here; see [Who owns what](#who-owns-what). |
+| `tests/`, `core/__tests__/`, `server/__tests__/` | 294 TypeScript + 44 Python tests. |
 
 ---
 
@@ -158,7 +158,7 @@ optional sidecar — see below for what actually still needs it.
 |---|---|
 | `bun run edge-audit` | Cost-adjusted breakeven win rate per asset. Pure arithmetic on the strategy's own geometry — no backtest, so no sample can flatter it. `-- --atr 0.15` to assume a livelier bar. |
 | `bun run backtest -- --asset BTCUSDT --from 2024-01-01 --to 2024-06-01` | Replay history through the real strategy. Reports net of costs, plus expectancy per trade and the breakeven rate. |
-| `bun run score` | Batch config scorer. Reads a JSON job on stdin, scores N configs over one candle window, writes JSON to stdout. This is what Teo's sweep calls, so it optimises the *real* strategy rather than a re-implementation. |
+| `bun run score` | Batch config scorer. Reads a JSON job on stdin, scores N configs over one candle window, writes JSON to stdout. |
 
 ```bash
 # score three configs, with a 70/30 in-sample / out-of-sample split
@@ -179,7 +179,7 @@ applied.
 | `bun run typecheck` | `tsc -b --force` across UI, server, core and scripts. |
 | `bun test core server` | 102 tests. |
 | `bun run check` / `format` | Biome lint + format. |
-| `.venv/bin/python -m pytest` | 89 Python tests. |
+| `.venv/bin/python -m pytest` | 44 Python tests, including the guard that keeps trade logic out of Python. |
 
 ---
 
@@ -489,57 +489,63 @@ so they remain assumptions and are labelled as such in the output.
 
 ---
 
-## Teo (Python sidecar)
+## Who owns what
 
-Optional, and **not part of the packaged app**. The dashboard, engine, backtest
-and cost model are all TypeScript.
+The one boundary worth knowing, because it used to be blurred and that cost
+real correctness:
 
-**Regime tagging, the parameter sweep and the self-heal decision are now
-TypeScript** (`core/regime.ts`, `core/sweep.ts`, `core/selfheal.ts`) and score
-with the real strategy directly — no proxy, no subprocess. The Python
-equivalents remain for the FastAPI service, but nothing in the app depends on
-them.
+| | TypeScript (`core/`, `server/`) | Python (`teo/`) |
+|---|---|---|
+| Strategy, indicators, grading | ✅ | — |
+| Backtest replay, cost model | ✅ | — |
+| Parameter sweep, regime, self-heal | ✅ | — |
+| Portfolio risk, significance | ✅ | — |
+| **Kronos forecasting** | — | ✅ |
 
-What genuinely still needs Python is Kronos, which is PyTorch. If you never want
-to install Python, skip this section; you lose Kronos forecasting, which has not
-been shown to beat its own baseline (see Known limitations).
+**Anything that decides a trade is TypeScript.** Python exists for exactly one
+reason: Kronos is a pretrained PyTorch model with no TypeScript equivalent.
+
+### Why the Python copies were deleted
+
+Teo used to carry its own backtest engine, sweep, regime detector, memory store
+and self-heal loop. When TypeScript grew its own, both existed for a while —
+which is not redundancy, it is a disagreement waiting to be found. And they did
+disagree:
+
+- The Python backtest ran an **EMA-crossover proxy that was never the
+  dashboard's strategy**. On a random walk it fired 34 trades where the real
+  strategy fires none, so every ranking it produced described a different system.
+- Its **hedge mode was a measurable no-op** — identical Calmar, profit factor
+  and win rate to the unhedged run.
+
+`teo/loop.py`, `teo/selfheal.py`, `teo/memory.py`, `teo/strategies.py`,
+`teo/assets.py`, `teo/dashboard.py` and all of `teo/backtest/` are gone, along
+with the `/backtest`, `/optimize`, `/selfheal` and `/assets` routes. Their
+TypeScript equivalents are what the engine actually runs.
+
+`tests/test_no_strategy_logic.py` fails if any of it comes back — a README note
+does not survive contact with a future change, and a failing test does. It
+checks both directions: no trade logic in Python, and Kronos still present.
+
+Everything removed is recoverable from git history (before `10b4196`) if you
+ever want to read it.
+
+### Running the sidecar
+
+Optional, and **not part of the packaged app**. Skip it entirely and you lose
+only Kronos forecasting, which has not been shown to beat its own baseline (see
+Known limitations).
 
 ```bash
 python -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/python -m pytest
+uvicorn teo.main:app --port 8000
 ```
 
 | Endpoint | Purpose |
 |---|---|
 | `GET /health` | Liveness, active forecaster. |
 | `POST /forecast` | OHLCV → forecast cone. |
-| `POST /backtest` | Replay a config. |
-| `POST /optimize` | Parameter sweep, ranked. |
-| `POST /selfheal` | Detect degradation, propose a config swap. |
-| `GET /assets` | Teo's asset registry (tiers 1–3). |
-
-```bash
-uvicorn teo.main:app --port 8000
-python -m teo.loop --interval 15m --lookback 1000    # self-heal across assets
-```
-
-Teo **proposes**; it never applies. Swaps are recorded for audit and applied by
-you.
-
-### How a proposal is validated
-
-`teo/backtest/ts_bridge.py` shells out to `scripts/score.ts`, so the winner of a
-sweep is re-scored against the **real** strategy — `analyzeCandles`, net of real
-per-asset costs — on a held-out slice it was not selected on.
-
-This matters because the sweep itself ranks candidates with a fast Python
-EMA-crossover proxy that is *not* the dashboard's strategy. On a random walk the
-real strategy produces ~0 trades where the proxy fires 34.
-
-`assess()` will not propose a swap without out-of-sample evidence. Best-of-36 on
-one window measures selection luck: on synthetic data with no signal at all, the
-in-sample "improvement" cleared the swap threshold by 14×. Set
-`require_out_of_sample=False` to disable the gate, knowingly.
 
 ### Kronos forecasting
 
@@ -605,26 +611,36 @@ to remember a default, and writes that forgot were silently filed under gold.
 
 Stated plainly, because a trading tool that hides these is worse than no tool.
 
-1. **No demonstrated edge.** See the edge audit above. The default targets are
-   unprofitable after costs on every asset; nothing has been forward-tested.
-2. **The backtest is not the live engine.** `core/backtest.ts` is
+1. **No demonstrated edge.** Nothing has been forward-tested. The significance
+   machinery exists and is tested, but no live trades have fed it, so the honest
+   verdict on every asset is `insufficient_data`. Whether these signals beat
+   chance is still unknown.
+2. **Costs are assumed unless you sync MT5.** The built-in per-asset spreads are
+   crypto-exchange estimates, and for gold they were **11× too pessimistic**
+   against a real CFD quote. Fees and stop slippage remain assumptions even
+   after a sync — a quote cannot show them. Only the spread is ever measured.
+3. **The backtest is not the live engine.** `core/backtest.ts` is
    single-position and single-timeframe; the live engine requires 15m confluence
    and can hold several ideas per asset. Treat backtest output as a comparison
    between configs, not a P&L forecast.
-3. **It only runs while the machine is on.** Gap recovery resolves exits
+4. **It only runs while the machine is on.** Gap recovery resolves exits
    correctly after downtime, but it cannot act during it. For continuous
    monitoring, run it on something always-on.
-4. **Forecast confidence is not accuracy.** It measures how narrow the predicted
+5. **Forecast confidence is not accuracy.** It measures how narrow the predicted
    cone is. Nothing scores forecasts against what actually happened, so there is
-   no evidence Kronos beats the baseline — or that either beats guessing.
-5. **No portfolio view.** Six of seven assets are crypto that move together.
-   Seven simultaneous longs is one leveraged bet on a single factor, currently
-   reported as seven independent results. The `hedge` strategy in Teo scales
-   position size and drawdown by the same constant, so every ratio is identical
-   to `edge` — it is not a hedge.
-6. **Credentials in git history.** `.env.local` was committed while this repo
+   no evidence Kronos beats the baseline — or that either beats guessing. This
+   is the strongest argument for deleting the Python sidecar entirely.
+6. **Correlations start as a guess.** With fewer than 30 overlapping bars the
+   portfolio model assumes ρ = 0.8 and flags the estimate `assumed`. On a fresh
+   database every pair is assumed until the engine has stored enough history.
+7. **The self-heal out-of-sample gate is not exercised end-to-end.** It is unit
+   tested against fixtures, but the strategy trades too rarely on synthetic
+   noise to reach the gate in an integration test. See
+   `server/__tests__/selfheal.test.ts`.
+8. **Credentials in git history.** `.env.local` was committed while this repo
    was public. Those keys are now dead (they addressed a Convex deployment and
    an email service the app no longer uses) but the values remain in history.
+   Cloning this repo elsewhere republishes them unless you squash the history.
 
 ---
 
