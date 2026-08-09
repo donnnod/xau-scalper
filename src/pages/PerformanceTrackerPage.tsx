@@ -10,6 +10,7 @@ import {
   User,
 } from "lucide-react";
 import { useState } from "react";
+import { SelfHealPanel } from "@/components/SelfHealPanel";
 import { useLive } from "@/hooks/useLive";
 import { api, type Significance } from "@/lib/api";
 
@@ -405,6 +406,9 @@ export function PerformanceTrackerPage() {
           </div>
         </div>
       )}
+
+      {/* Whether the strategy should change, next to how it is doing. */}
+      <SelfHealPanel asset={selected} />
 
       {/* Recent Closed */}
       <div className="bg-[#12141A] border border-white/5 rounded-lg p-3">

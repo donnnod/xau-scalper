@@ -123,6 +123,43 @@ export interface Significance {
   summary: string;
 }
 
+export interface RegimeSummary {
+  regime: string;
+  records: number;
+  /** Records that traded enough to carry a real score. */
+  scored: number;
+  /** null when nothing in this regime traded enough to be judged. */
+  bestScore: number | null;
+  worstScore: number | null;
+  medianScore: number | null;
+  proposals: number;
+}
+
+export interface HealOutcomeRow {
+  id: number;
+  asset: string;
+  regime: string;
+  /** "hold" | "propose_swap". The loop never applies. */
+  action: string;
+  /** "healthy" | "degraded" | "insufficient_data". */
+  status: string;
+  score: number;
+  config: Record<string, number>;
+  reason: string;
+  metadata: unknown;
+  at: number;
+}
+
+export interface SelfHeal {
+  outcomes: HealOutcomeRow[];
+  byAsset: Array<{
+    asset: string;
+    regimes: RegimeSummary[];
+    latest: HealOutcomeRow | null;
+  }>;
+  lastRunAt: number | null;
+}
+
 export interface PortfolioPosition {
   asset: string;
   direction: "LONG" | "SHORT";
@@ -274,6 +311,9 @@ export const api = {
     get<{ byAsset: AssetPerformance[] }>(`/api/performance${q(opts)}`),
 
   portfolio: () => get<Portfolio>("/api/portfolio"),
+
+  selfHeal: (opts: { asset?: string; limit?: number } = {}) =>
+    get<SelfHeal>(`/api/selfheal${q(opts)}`),
 
   candles: (asset: string, interval = "5m", limit = 200) =>
     get<{ asset: string; interval: string; candles: Candle[] }>(
