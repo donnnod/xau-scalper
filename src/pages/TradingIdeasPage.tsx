@@ -3,6 +3,7 @@ import {
   ChevronDown,
   ChevronUp,
   FlaskConical,
+  Send,
   Trash2,
   User,
   Zap,
@@ -10,7 +11,7 @@ import {
 import { useState } from "react";
 import { toast } from "sonner";
 import { useLive, useMutation } from "@/hooks/useLive";
-import { api } from "@/lib/api";
+import { type Account, api } from "@/lib/api";
 
 const STATUS_COLORS: Record<string, string> = {
   ACTIVE: "bg-blue-500/20 text-blue-400 border-blue-500/30",
@@ -86,6 +87,10 @@ export function TradingIdeasPage() {
     ["ideas"],
   );
   const [deleteIdea] = useMutation((id: number) => api.deleteIdea(id));
+  const accounts = useLive(
+    () => api.accounts().then(r => r.accounts),
+    ["orders"],
+  );
   const [filter, setFilter] = useState<string>("ALL");
   const [sourceFilter, setSourceFilter] = useState<string>("ALL");
   const [expandedId, setExpandedId] = useState<number | null>(null);
@@ -430,7 +435,14 @@ export function TradingIdeasPage() {
                     )}
 
                     {/* Actions */}
-                    <div className="flex justify-end">
+                    <div className="flex items-center justify-end gap-4">
+                      {(idea.status === "ACTIVE" ||
+                        idea.status === "TP1_HIT") && (
+                        <SendToMt5
+                          ideaId={idea.id as number}
+                          accounts={(accounts ?? []).filter(a => a.enabled)}
+                        />
+                      )}
                       <button
                         onClick={e => {
                           e.stopPropagation();
@@ -449,6 +461,70 @@ export function TradingIdeasPage() {
           })
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Manual "send this idea to a terminal" control. Lives in the expanded row so
+ * an idea can be dispatched to any one enabled account on demand — the
+ * counterpart to auto accounts, which the engine fires without asking.
+ */
+function SendToMt5({
+  ideaId,
+  accounts,
+}: {
+  ideaId: number;
+  accounts: Account[];
+}) {
+  const [accountId, setAccountId] = useState<number | "">("");
+  const [sendOrder, pending] = useMutation((id: number) =>
+    api.sendOrder(ideaId, id),
+  );
+
+  if (accounts.length === 0) {
+    return (
+      <span className="text-[10px] text-muted-foreground">
+        No account connected —{" "}
+        <a href="/execution" className="underline hover:text-white">
+          set one up
+        </a>
+      </span>
+    );
+  }
+
+  const send = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const id = accountId === "" ? accounts[0].id : accountId;
+    const res = await sendOrder(id);
+    const label = accounts.find(a => a.id === id)?.label ?? "account";
+    if (res) toast.success(`Sent to ${label}`);
+    else toast.error("Send failed — check the account is reachable");
+  };
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <select
+        value={accountId}
+        onClick={e => e.stopPropagation()}
+        onChange={e =>
+          setAccountId(e.target.value === "" ? "" : Number(e.target.value))
+        }
+        className="bg-[#12141A] border border-white/10 rounded px-1.5 py-1 text-[11px]"
+      >
+        {accounts.map(a => (
+          <option key={a.id} value={a.id}>
+            {a.label} ({a.mode})
+          </option>
+        ))}
+      </select>
+      <button
+        onClick={send}
+        disabled={pending}
+        className="text-xs text-[#D4A843] hover:text-[#E5BC5C] flex items-center gap-1 disabled:opacity-50"
+      >
+        <Send className="w-3 h-3" /> {pending ? "Sending…" : "Send to MT5"}
+      </button>
     </div>
   );
 }
