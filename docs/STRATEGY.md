@@ -74,6 +74,34 @@ positive in **4 of 6** windows — not every sub-period, which is the honest
 limitation: this is a positive-expectancy edge over the full sample, not a
 metronome.
 
+## Stacking a Daily-trend veto on quiet-trend
+
+The edgescan showed the with-vs-against-Daily gap is the strongest signal in the
+data, so [`scripts/quiet-trend-daily-bt.ts`](../scripts/quiet-trend-daily-bt.ts)
+adds a hard veto: block any quiet-trend entry that disagrees with the Daily
+EMA(50) trend (read only from days that closed *before* the entry — no lookahead).
+
+| Config      | Variant          | Trades | PF   | Expectancy | Total P&L | Max DD |
+|-------------|------------------|-------:|-----:|-----------:|----------:|-------:|
+| 1.5× / 2.5R | baseline         | 2,277  | 1.16 | 1.05       | 2,396     | **407**|
+| 1.5× / 2.5R | **+ daily veto** | 1,548  | **1.25** | **1.56** | 2,417   | 562    |
+| 2.0× / 2.0R | baseline         | 1,828  | 1.16 | 1.18       | 2,155     | **442**|
+| 2.0× / 2.0R | **+ daily veto** | 1,269  | **1.23** | **1.65** | 2,091   | 600    |
+
+**What it does:** per-trade quality improves markedly — expectancy +40–49%, PF
+1.16 → ~1.24 — by vetoing ~30% of trades (the counter-Daily-trend ones). But:
+
+1. **Total profit is a wash** — the same money from ~30% fewer trades. The veto
+   removes low-quality trades rather than adding profit (real value: less
+   exposure, lower cost churn, less screen time — but not more dollars).
+2. **Drawdown gets *worse*** (407→562, 442→600). Once every trade must align with
+   the Daily trend, trades become more correlated; when the Daily trend whipsaws,
+   losses cluster instead of being diluted by counter-trend trades.
+
+**Verdict:** a capital-efficiency win, not a profit or risk win. Better if the
+goal is "same return, fewer/higher-quality trades"; worse if the goal is minimum
+drawdown. Concentration is the price of the higher per-trade edge.
+
 ## Bottom line
 
 The data converges on one design, and it is not a fast scalper:
