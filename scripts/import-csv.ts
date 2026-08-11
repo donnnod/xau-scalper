@@ -100,6 +100,18 @@ function main() {
     }
 
     const assetId = `mt5:${cli.asset}`;
+
+    if (!database.getSetting(`mt5:${cli.asset}`)) {
+      const digits = cli.asset.includes("JPY") ? 3 : 2;
+      database.setSetting(`mt5:${cli.asset}`, {
+        symbol: cli.asset,
+        digits,
+        assetId,
+        spreadBps: digits === 2 ? 1.5 : 2.0,
+      });
+      console.log(`  registered MT5 metadata for ${cli.asset}`);
+    }
+
     database.saveCandles(assetId, interval, candles);
     console.log(
       `${basename(file)}: ${candles.length} bars → ${assetId} ${interval}` +
