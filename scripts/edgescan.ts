@@ -49,10 +49,13 @@ function main() {
 
   if (!meta) {
     console.error(`No MT5 data for "${sym}". Run 'bun run mt5:sync' first.`);
+    console.error("Hint: re-run the import to register metadata:");
+    console.error("  bun run --bun scripts/import-csv.ts seeds/XAUUSD_H1_2021-2026.csv --asset XAUUSD --interval 1h");
     process.exit(1);
   }
 
   const asset = mt5Asset(meta);
+  console.log(`Looking up candles: asset=${meta.assetId} interval=${cli.interval}`);
   const candles = database.getCandles(meta.assetId, cli.interval, 100_000);
   if (candles.length < 500) {
     console.error(
