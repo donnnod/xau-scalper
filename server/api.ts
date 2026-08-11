@@ -20,9 +20,10 @@ import {
 import { summariseByRegime } from "../core/memory";
 import { averageConcurrency, summarise } from "../core/portfolio";
 import { assessSignificance, effectiveSampleSize } from "../core/significance";
-import type { Db } from "./db";
+import type { Db, Mt5AccountRow } from "./db";
 import { correlationsFrom, openExposures } from "./engine";
 import { type AppEvent, publish, subscribe } from "./events";
+import { closeOrder, RISK_PRESETS, sendIdeaToAccount } from "./executor";
 import { fetchCandles, fetchTickers } from "./market";
 import type { RiskManager } from "./risk-manager";
 
@@ -103,6 +104,31 @@ function camel(row: object): Record<string, unknown> {
 
 function camelAll(rows: object[]): Record<string, unknown>[] {
   return rows.map(camel);
+}
+
+/**
+ * Account row → wire shape: camelCase, `enabled` as a boolean, and `risk`
+ * parsed from its JSON column into an object the UI edits directly.
+ */
+function accountToWire(row: Mt5AccountRow): Record<string, unknown> {
+  let risk: unknown = null;
+  try {
+    risk = JSON.parse(row.risk_json);
+  } catch {
+    risk = null;
+  }
+  return {
+    id: row.id,
+    label: row.label,
+    mode: row.mode,
+    symbol: row.symbol,
+    terminalDir: row.terminal_dir,
+    execution: row.execution,
+    enabled: row.enabled === 1,
+    risk,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
 }
 
 export async function handleApi(
@@ -554,6 +580,132 @@ export async function handleApi(
     if (!risk) return bad("Risk manager not configured.", 503);
     risk.resume();
     return json({ ok: true });
+  }
+
+  // ─── Execution: risk presets ───
+  if (path === "/api/execution/presets") {
+    return json({ presets: RISK_PRESETS });
+  }
+
+  // ─── Execution: accounts ───
+  if (path === "/api/accounts" && req.method === "GET") {
+    return json({ accounts: db.listAccounts().map(accountToWire) });
+  }
+
+  if (path === "/api/accounts" && req.method === "POST") {
+    const body = await readBody(req);
+    if (body instanceof Response) return body;
+    const label = typeof body.label === "string" ? body.label.trim() : "";
+    if (!label) return bad("label is required");
+    const mode = body.mode === "live" ? "live" : "demo";
+    const execution = body.execution === "auto" ? "auto" : "manual";
+    if (body.risk == null || typeof body.risk !== "object") {
+      return bad("risk config is required");
+    }
+    const id = db.createAccount({
+      label,
+      mode,
+      execution,
+      symbol: typeof body.symbol === "string" ? body.symbol : undefined,
+      terminalDir:
+        typeof body.terminalDir === "string" && body.terminalDir.trim()
+          ? body.terminalDir.trim()
+          : null,
+      enabled: body.enabled !== false,
+      risk: body.risk,
+    });
+    publish("orders");
+    return json({ account: accountToWire(db.getAccount(id)!) }, 201);
+  }
+
+  // /api/accounts/:id — PATCH updates, DELETE removes.
+  if (path.startsWith("/api/accounts/")) {
+    const id = Number.parseInt(path.slice("/api/accounts/".length), 10);
+    if (!Number.isInteger(id)) return bad("invalid account id");
+    if (!db.getAccount(id)) return bad("no such account", 404);
+
+    if (req.method === "DELETE") {
+      db.deleteAccount(id);
+      publish("orders");
+      return json({ ok: true });
+    }
+    if (req.method === "PATCH") {
+      const body = await readBody(req);
+      if (body instanceof Response) return body;
+      db.updateAccount(id, {
+        label: typeof body.label === "string" ? body.label : undefined,
+        mode:
+          body.mode === "live" || body.mode === "demo" ? body.mode : undefined,
+        symbol: typeof body.symbol === "string" ? body.symbol : undefined,
+        terminalDir:
+          body.terminalDir === null
+            ? null
+            : typeof body.terminalDir === "string"
+              ? body.terminalDir
+              : undefined,
+        execution:
+          body.execution === "auto" || body.execution === "manual"
+            ? body.execution
+            : undefined,
+        enabled:
+          typeof body.enabled === "boolean" ? body.enabled : undefined,
+        risk:
+          body.risk != null && typeof body.risk === "object"
+            ? body.risk
+            : undefined,
+      });
+      publish("orders");
+      return json({ account: accountToWire(db.getAccount(id)!) });
+    }
+    return bad("method not allowed", 405);
+  }
+
+  // ─── Execution: orders ───
+  if (path === "/api/orders" && req.method === "GET") {
+    return json({ orders: camelAll(db.listOrders(intParam(url, "limit", 100, 500))) });
+  }
+
+  // Manually send an existing idea to an account (the "Send to MT5" action).
+  if (path === "/api/orders" && req.method === "POST") {
+    const body = await readBody(req);
+    if (body instanceof Response) return body;
+    const ideaId = num(body, "ideaId");
+    if (ideaId instanceof Response) return ideaId;
+    const accountId = num(body, "accountId");
+    if (accountId instanceof Response) return accountId;
+
+    const idea = db.getIdea(ideaId);
+    if (!idea) return bad("no such idea", 404);
+    const account = db.getAccount(accountId);
+    if (!account) return bad("no such account", 404);
+
+    const result = sendIdeaToAccount(db, idea, account);
+    if (result.skipped) return bad(`not sent: ${result.skipped}`, 409);
+    db.logJournal({
+      eventType: "ORDER_DISPATCHED",
+      asset: idea.asset,
+      ideaId: idea.id,
+      direction: idea.direction,
+      price: idea.entry_price,
+      details: `Manually sent to ${account.label}`,
+      metadata: { result },
+    });
+    publish("orders");
+    return json({ result }, 201);
+  }
+
+  // Close a filled order's position.
+  if (path === "/api/orders/close" && req.method === "POST") {
+    const body = await readBody(req);
+    if (body instanceof Response) return body;
+    const orderId = num(body, "orderId");
+    if (orderId instanceof Response) return orderId;
+    const order = db.listOrders(500).find(o => o.id === orderId);
+    if (!order) return bad("no such order", 404);
+    const result = closeOrder(db, order);
+    if (result.skipped) return bad(`not closed: ${result.skipped}`, 409);
+    publish("orders");
+    return json({ result }, 201);
   }
 
   // Any other /api/* path is a mistake, not a client-side route. Falling

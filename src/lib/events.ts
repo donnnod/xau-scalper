@@ -12,4 +12,6 @@ export type EventKind =
   | "prices"
   | "regime"
   | "engine"
+  | "risk"
+  | "orders"
   | "hello";

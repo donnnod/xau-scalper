@@ -19,6 +19,7 @@ import { getEnabledAssets } from "../core/assets";
 import { handleApi, handleEvents } from "./api";
 import { Db } from "./db";
 import { generateSignals, monitorIdeas, recoverGap } from "./engine";
+import { pollResponses } from "./executor";
 import { reconcileState } from "./reconciliation";
 import { RiskManager, riskConfigFromEnv } from "./risk-manager";
 import { publish } from "./events";
@@ -47,6 +48,13 @@ const DIST =
 /** Timer cadences. Monitor is the tight loop; the rest are housekeeping. */
 const MONITOR_MS = 60_000;
 const SIGNAL_MS = 5 * 60_000;
+/**
+ * How often the executor reads fills/rejects the MT5 EA wrote back. Kept tight
+ * (5s) because an execution acknowledgement is the one loop a trader is
+ * watching in real time; it is cheap (a directory scan) and a no-op until an
+ * account is connected.
+ */
+const EXEC_POLL_MS = 5_000;
 const PRUNE_MS = 6 * 60 * 60_000;
 // Regime, macro, news and sweeps move on a much slower clock than price, so
 // running them every 5 minutes (as the Convex crons did) spent requests to
@@ -210,6 +218,10 @@ const timers = [
     SIGNAL_MS,
   ),
   setInterval(() => void runIntel(), INTEL_MS),
+  setInterval(
+    () => void safely("exec-poll", async () => { pollResponses(db); }),
+    EXEC_POLL_MS,
+  ),
   ...(SELFHEAL_ON
     ? [
         setInterval(

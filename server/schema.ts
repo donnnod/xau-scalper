@@ -181,4 +181,59 @@ CREATE INDEX IF NOT EXISTS idx_outcomes_asset_regime
 
 CREATE INDEX IF NOT EXISTS idx_outcomes_recent
   ON strategy_outcomes (created_at DESC);
+
+-- ─── MT5 execution accounts ───
+-- Each row is one broker terminal the executor may send orders to. A user can
+-- connect several (demo and/or live) and pick, per account, whether generated
+-- ideas fire automatically or wait for a manual "send" click. Position sizing
+-- is stored per account as a JSON blob so demo and live can carry different
+-- risk. No credentials live here: the terminal is already logged in, and the
+-- bridge only drops order files into its MQL5/Files directory.
+CREATE TABLE IF NOT EXISTS mt5_accounts (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  label        TEXT    NOT NULL,
+  mode         TEXT    NOT NULL CHECK (mode IN ('demo','live')),
+  symbol       TEXT    NOT NULL DEFAULT 'XAUUSD',   -- the broker's own symbol name
+  terminal_dir TEXT,                                 -- MQL5/Files/teo bridge dir; NULL = auto-discover
+  execution    TEXT    NOT NULL DEFAULT 'manual' CHECK (execution IN ('auto','manual')),
+  enabled      INTEGER NOT NULL DEFAULT 1,
+  risk_json    TEXT    NOT NULL,                     -- sizing config, see server/executor.ts
+  created_at   INTEGER NOT NULL,
+  updated_at   INTEGER NOT NULL
+);
+
+-- ─── Execution orders ───
+-- Every order the bridge writes for a terminal, and the fill/reject it read
+-- back. client_id is the idempotency key written into the command file and
+-- echoed in the response, so a duplicated command file can never open a second
+-- position. idea_id links back to the signal that produced it (NULL for a
+-- manual close), and is SET NULL rather than CASCADE so the order history
+-- survives a pruned idea.
+CREATE TABLE IF NOT EXISTS execution_orders (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  account_id  INTEGER NOT NULL REFERENCES mt5_accounts(id) ON DELETE CASCADE,
+  idea_id     INTEGER REFERENCES trading_ideas(id) ON DELETE SET NULL,
+  client_id   TEXT    NOT NULL UNIQUE,
+  action      TEXT    NOT NULL CHECK (action IN ('OPEN','CLOSE')),
+  direction   TEXT    CHECK (direction IS NULL OR direction IN ('LONG','SHORT')),
+  symbol      TEXT    NOT NULL,
+  lots        REAL    NOT NULL DEFAULT 0,
+  entry_price REAL,
+  stop_loss   REAL,
+  take_profit REAL,
+  status      TEXT    NOT NULL DEFAULT 'PENDING' CHECK (
+                status IN ('PENDING','SENT','FILLED','REJECTED','ERROR','CANCELLED')),
+  ticket      INTEGER,
+  fill_price  REAL,
+  error       TEXT,
+  created_at  INTEGER NOT NULL,
+  updated_at  INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_orders_account
+  ON execution_orders (account_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_orders_open
+  ON execution_orders (status) WHERE status IN ('PENDING','SENT');
+CREATE INDEX IF NOT EXISTS idx_orders_idea
+  ON execution_orders (idea_id);
 `;

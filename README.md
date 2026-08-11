@@ -487,6 +487,52 @@ brokers do not publish real volume.
 Only the spread is measured. Fees and stop slippage cannot be read from a quote,
 so they remain assumptions and are labelled as such in the output.
 
+### Automated execution
+
+`TeoExporter.mq5` is read-only. `TeoTrader.mq5` is the other half: it places the
+orders the engine generates. The same constraint applies — no Python bridge on
+macOS — so it works the same way, through files in `MQL5/Files/teo`:
+
+```
+server → EA   teo/commands/<clientId>.json    (the server writes an order)
+EA → server   teo/responses/<clientId>.json   (the EA writes the fill/reject)
+```
+
+`clientId` is a UUID and the server's idempotency key, so a replayed command
+file can never open a second position — the EA writes the response, deletes the
+command, and refuses any `clientId` whose response already exists.
+
+**Setup**
+
+1. `MQL5/Experts` → copy `mt5/TeoTrader.mq5` there, F7 to compile
+2. Drag **TeoTrader** onto a chart on the account you want to trade
+3. Enable **Allow Algo Trading** (toolbar) and, in the EA dialog, live trading
+4. In the dashboard, open **Execution** and connect the account
+
+Each account you connect chooses, independently:
+
+- **Demo or live** — connect as many terminals as you like, mixed freely.
+- **Auto or manual** — *auto* sends every idea the engine generates the moment
+  it fires; *manual* leaves the idea in the journal until you send it. A live
+  account starts manual, and the UI confirms before you switch it to auto.
+- **Position sizing** — *fixed % of equity per trade* (size derived from the
+  stop distance) or *fixed lot*. Three presets — conservative 0.5%, balanced 1%,
+  aggressive 2% — seed the form; every field is then yours to edit. Size is
+  clamped to `[minLot, maxLots]` and the broker's lot step, and the EA rejects
+  any lot above its own `InpMaxLots` regardless of what the server asks for.
+
+The **Execution** page also lists every order with its live status
+(`PENDING → SENT → FILLED`/`REJECTED`), the broker ticket, and the fill price,
+and lets you close a filled position. The engine's signal-only workflow is
+unchanged until at least one account is marked *auto*: with no accounts
+connected, nothing is ever sent.
+
+**Safety.** The bridge never reads account credentials — the terminal is already
+logged in. Nothing is sent for a disabled account. The server binds to
+`127.0.0.1`, so the command files can only be written by a process on this
+machine. Start on demo, watch a few fills land on the Execution page, and only
+then switch an account to live.
+
 ### Trend and mean-reversion are scored separately
 
 The original model sums trend-following and mean-reversion evidence into one

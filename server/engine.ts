@@ -40,6 +40,7 @@ import {
 import { analyzeQuietTrend, htfRegime } from "../core/quiet-trend";
 import type { Db, TradingIdea } from "./db";
 import { publish } from "./events";
+import { dispatchIdea } from "./executor";
 import type { RiskManager } from "./risk-manager";
 import {
   type Fetcher,
@@ -312,6 +313,11 @@ export async function generateForAsset(
       `portfolio risk ${decision.riskBefore.toFixed(2)} → ${decision.riskAfter.toFixed(2)}`,
     metadata: { portfolio: decision },
   });
+
+  // Fan the fresh idea out to any auto-execution accounts. A no-op until the
+  // user connects a terminal and marks it 'auto', so the signal-only workflow
+  // is unchanged for anyone who has not opted in.
+  dispatchIdea(db, id);
 
   return id;
 }

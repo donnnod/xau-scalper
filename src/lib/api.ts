@@ -47,6 +47,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const get = <T>(path: string) => request<T>(path);
 export const post = <T>(path: string, body?: unknown) =>
   request<T>(path, { method: "POST", body: JSON.stringify(body ?? {}) });
+export const patch = <T>(path: string, body?: unknown) =>
+  request<T>(path, { method: "PATCH", body: JSON.stringify(body ?? {}) });
 export const del = <T>(path: string) => request<T>(path, { method: "DELETE" });
 
 // ─── Shapes returned by the server ───
@@ -244,6 +246,63 @@ export interface Candle {
   volume: number;
 }
 
+// ─── Execution / accounts ───
+
+export type RiskConfig =
+  | {
+      mode: "fixed_fraction";
+      riskPct: number;
+      equity: number;
+      contractSize?: number;
+      lotStep?: number;
+      minLot?: number;
+      maxLots?: number;
+    }
+  | { mode: "fixed_lot"; lots: number };
+
+export interface Account {
+  id: number;
+  label: string;
+  mode: "demo" | "live";
+  symbol: string;
+  terminalDir: string | null;
+  execution: "auto" | "manual";
+  enabled: boolean;
+  risk: RiskConfig;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface AccountInput {
+  label: string;
+  mode: "demo" | "live";
+  symbol?: string;
+  terminalDir?: string | null;
+  execution?: "auto" | "manual";
+  enabled?: boolean;
+  risk: RiskConfig;
+}
+
+export interface ExecutionOrder {
+  id: number;
+  accountId: number;
+  ideaId: number | null;
+  clientId: string;
+  action: "OPEN" | "CLOSE";
+  direction: "LONG" | "SHORT" | null;
+  symbol: string;
+  lots: number;
+  entryPrice: number | null;
+  stopLoss: number | null;
+  takeProfit: number | null;
+  status: "PENDING" | "SENT" | "FILLED" | "REJECTED" | "ERROR" | "CANCELLED";
+  ticket: number | null;
+  fillPrice: number | null;
+  error: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
 // ─── Endpoints ───
 
 const q = (params: Record<string, string | number | undefined>) => {
@@ -299,4 +358,21 @@ export const api = {
       lastSignalRun: number | null;
       lastMonitorRun: number | null;
     }>("/api/health"),
+
+  // ─── Execution / accounts ───
+  presets: () =>
+    get<{ presets: Record<string, RiskConfig> }>("/api/execution/presets"),
+  accounts: () => get<{ accounts: Account[] }>("/api/accounts"),
+  createAccount: (body: AccountInput) =>
+    post<{ account: Account }>("/api/accounts", body),
+  updateAccount: (id: number, body: Partial<AccountInput>) =>
+    patch<{ account: Account }>(`/api/accounts/${id}`, body),
+  deleteAccount: (id: number) => del<{ ok: true }>(`/api/accounts/${id}`),
+
+  orders: (opts: { limit?: number } = {}) =>
+    get<{ orders: ExecutionOrder[] }>(`/api/orders${q(opts)}`),
+  sendOrder: (ideaId: number, accountId: number) =>
+    post<{ result: unknown }>("/api/orders", { ideaId, accountId }),
+  closeOrder: (orderId: number) =>
+    post<{ result: unknown }>("/api/orders/close", { orderId }),
 };

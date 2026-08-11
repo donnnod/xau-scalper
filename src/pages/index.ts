@@ -1,4 +1,5 @@
 export { default as DashboardPage } from "./DashboardPage";
+export { default as ExecutionPage } from "./ExecutionPage";
 export { default as ExperimentalPage } from "./ExperimentalPage";
 export { PerformanceTrackerPage } from "./PerformanceTrackerPage";
 export { RiskManagerPage } from "./RiskManagerPage";

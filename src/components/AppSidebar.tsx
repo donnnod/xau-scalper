@@ -1,5 +1,6 @@
 import {
   BarChart3,
+  Cpu,
   FlaskConical,
   LayoutDashboard,
   Lightbulb,
@@ -34,6 +35,7 @@ const signalsNav = [
 const trackingNav = [
   { href: "/performance", label: "Performance", icon: BarChart3 },
   { href: "/risk", label: "Risk Manager", icon: Shield },
+  { href: "/execution", label: "Execution", icon: Cpu },
 ];
 
 function NavLink({

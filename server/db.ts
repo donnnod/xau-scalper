@@ -92,6 +92,73 @@ export interface JournalEntry {
   metadata?: unknown;
 }
 
+export type AccountMode = "demo" | "live";
+export type ExecutionMode = "auto" | "manual";
+
+export interface Mt5AccountRow {
+  id: number;
+  label: string;
+  mode: AccountMode;
+  symbol: string;
+  terminal_dir: string | null;
+  execution: ExecutionMode;
+  enabled: number;
+  risk_json: string;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface NewAccount {
+  label: string;
+  mode: AccountMode;
+  symbol?: string;
+  terminalDir?: string | null;
+  execution?: ExecutionMode;
+  enabled?: boolean;
+  risk: unknown;
+}
+
+export type OrderStatus =
+  | "PENDING"
+  | "SENT"
+  | "FILLED"
+  | "REJECTED"
+  | "ERROR"
+  | "CANCELLED";
+
+export interface ExecutionOrderRow {
+  id: number;
+  account_id: number;
+  idea_id: number | null;
+  client_id: string;
+  action: "OPEN" | "CLOSE";
+  direction: Direction | null;
+  symbol: string;
+  lots: number;
+  entry_price: number | null;
+  stop_loss: number | null;
+  take_profit: number | null;
+  status: OrderStatus;
+  ticket: number | null;
+  fill_price: number | null;
+  error: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface NewOrder {
+  accountId: number;
+  ideaId?: number | null;
+  clientId: string;
+  action: "OPEN" | "CLOSE";
+  direction?: Direction | null;
+  symbol: string;
+  lots: number;
+  entryPrice?: number | null;
+  stopLoss?: number | null;
+  takeProfit?: number | null;
+}
+
 const OPEN_STATUSES = ["ACTIVE", "TP1_HIT"] as const;
 
 export class Db {
@@ -403,6 +470,180 @@ export class Db {
       )
       .get(key);
     return row ? (JSON.parse(row.value) as T) : null;
+  }
+
+  // ─── MT5 execution accounts ───
+
+  listAccounts(): Mt5AccountRow[] {
+    return this.raw
+      .query<Mt5AccountRow, never[]>(
+        `SELECT * FROM mt5_accounts ORDER BY created_at`,
+      )
+      .all();
+  }
+
+  getAccount(id: number): Mt5AccountRow | null {
+    return (
+      this.raw
+        .query<Mt5AccountRow, [number]>(
+          `SELECT * FROM mt5_accounts WHERE id = ?`,
+        )
+        .get(id) ?? null
+    );
+  }
+
+  /** Enabled accounts whose execution mode dispatches on new ideas automatically. */
+  autoAccounts(): Mt5AccountRow[] {
+    return this.raw
+      .query<Mt5AccountRow, never[]>(
+        `SELECT * FROM mt5_accounts WHERE enabled = 1 AND execution = 'auto' ORDER BY created_at`,
+      )
+      .all();
+  }
+
+  createAccount(a: NewAccount): number {
+    const now = Date.now();
+    const row = this.raw
+      .query<{ id: number }, never[]>(
+        `INSERT INTO mt5_accounts
+           (label, mode, symbol, terminal_dir, execution, enabled, risk_json, created_at, updated_at)
+         VALUES ($label, $mode, $symbol, $dir, $exec, $enabled, $risk, $now, $now)
+         RETURNING id`,
+      )
+      .get({
+        $label: a.label,
+        $mode: a.mode,
+        $symbol: a.symbol ?? "XAUUSD",
+        $dir: a.terminalDir ?? null,
+        $exec: a.execution ?? "manual",
+        $enabled: a.enabled === false ? 0 : 1,
+        $risk: JSON.stringify(a.risk),
+        $now: now,
+      } as never);
+    return row!.id;
+  }
+
+  updateAccount(id: number, patch: Partial<NewAccount>): void {
+    const cur = this.getAccount(id);
+    if (!cur) return;
+    this.raw
+      .prepare(
+        `UPDATE mt5_accounts SET
+           label = ?, mode = ?, symbol = ?, terminal_dir = ?, execution = ?,
+           enabled = ?, risk_json = ?, updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(
+        patch.label ?? cur.label,
+        patch.mode ?? cur.mode,
+        patch.symbol ?? cur.symbol,
+        patch.terminalDir !== undefined ? patch.terminalDir : cur.terminal_dir,
+        patch.execution ?? cur.execution,
+        patch.enabled === undefined ? cur.enabled : patch.enabled ? 1 : 0,
+        patch.risk ? JSON.stringify(patch.risk) : cur.risk_json,
+        Date.now(),
+        id,
+      );
+  }
+
+  deleteAccount(id: number): void {
+    this.raw.prepare(`DELETE FROM mt5_accounts WHERE id = ?`).run(id);
+  }
+
+  // ─── Execution orders ───
+
+  createOrder(o: NewOrder): number {
+    const now = Date.now();
+    const row = this.raw
+      .query<{ id: number }, never[]>(
+        `INSERT INTO execution_orders
+           (account_id, idea_id, client_id, action, direction, symbol, lots,
+            entry_price, stop_loss, take_profit, status, created_at, updated_at)
+         VALUES ($acct, $idea, $client, $action, $dir, $symbol, $lots,
+            $entry, $sl, $tp, 'PENDING', $now, $now)
+         RETURNING id`,
+      )
+      .get({
+        $acct: o.accountId,
+        $idea: o.ideaId ?? null,
+        $client: o.clientId,
+        $action: o.action,
+        $dir: o.direction ?? null,
+        $symbol: o.symbol,
+        $lots: o.lots,
+        $entry: o.entryPrice ?? null,
+        $sl: o.stopLoss ?? null,
+        $tp: o.takeProfit ?? null,
+        $now: now,
+      } as never);
+    return row!.id;
+  }
+
+  getOrderByClientId(clientId: string): ExecutionOrderRow | null {
+    return (
+      this.raw
+        .query<ExecutionOrderRow, [string]>(
+          `SELECT * FROM execution_orders WHERE client_id = ?`,
+        )
+        .get(clientId) ?? null
+    );
+  }
+
+  listOrders(limit = 100): ExecutionOrderRow[] {
+    return this.raw
+      .query<ExecutionOrderRow, [number]>(
+        `SELECT * FROM execution_orders ORDER BY created_at DESC LIMIT ?`,
+      )
+      .all(limit);
+  }
+
+  /** Orders written to a terminal but not yet acknowledged by the EA. */
+  pendingOrders(): ExecutionOrderRow[] {
+    return this.raw
+      .query<ExecutionOrderRow, never[]>(
+        `SELECT * FROM execution_orders WHERE status IN ('PENDING','SENT') ORDER BY created_at`,
+      )
+      .all();
+  }
+
+  updateOrderStatus(
+    id: number,
+    status: ExecutionOrderRow["status"],
+    fields: {
+      ticket?: number | null;
+      fillPrice?: number | null;
+      error?: string | null;
+    } = {},
+  ): void {
+    this.raw
+      .prepare(
+        `UPDATE execution_orders SET
+           status = ?, ticket = COALESCE(?, ticket),
+           fill_price = COALESCE(?, fill_price), error = ?, updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(
+        status,
+        fields.ticket ?? null,
+        fields.fillPrice ?? null,
+        fields.error ?? null,
+        Date.now(),
+        id,
+      );
+  }
+
+  /** Open (FILLED, not yet closed) OPEN-orders for an idea on a given account. */
+  openOrderForIdea(accountId: number, ideaId: number): ExecutionOrderRow | null {
+    return (
+      this.raw
+        .query<ExecutionOrderRow, [number, number]>(
+          `SELECT * FROM execution_orders
+           WHERE account_id = ? AND idea_id = ? AND action = 'OPEN'
+             AND status IN ('PENDING','SENT','FILLED')
+           ORDER BY created_at DESC LIMIT 1`,
+        )
+        .get(accountId, ideaId) ?? null
+    );
   }
 
   // ─── Job bookkeeping (gap recovery) ───
