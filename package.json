@@ -27,10 +27,14 @@
     "compare": "bun run --bun scripts/compare.ts",
     "edgescan": "bun run --bun scripts/edgescan.ts",
     "import-csv": "bun run --bun scripts/import-csv.ts",
+    "mt5:import-m15": "bun run --bun scripts/import-csv.ts seeds/XAUUSD_M15_2022-2026.csv --asset XAUUSD --interval 15m",
+    "mt5:import-m30": "bun run --bun scripts/import-csv.ts seeds/XAUUSD_M30_2021-2026.csv --asset XAUUSD --interval 30m",
     "mt5:import-h1": "bun run --bun scripts/import-csv.ts seeds/XAUUSD_H1_2021-2026.csv --asset XAUUSD --interval 1h",
+    "mt5:import-h4": "bun run --bun scripts/import-csv.ts seeds/XAUUSD_H4_2021-2026.csv --asset XAUUSD --interval 4h",
     "mt5:1h-backtest": "bun run --bun scripts/backtest.ts --source db --asset MT5:XAUUSD --interval 1h",
     "mt5:1h-sweep": "bun run --bun scripts/backtest.ts --source db --asset MT5:XAUUSD --interval 1h --sweep",
-    "mt5:1h-edgescan": "bun run --bun scripts/edgescan.ts --asset MT5:XAUUSD --interval 1h"
+    "mt5:1h-edgescan": "bun run --bun scripts/edgescan.ts --asset MT5:XAUUSD --interval 1h",
+    "mt5:quiet-trend": "bun run --bun scripts/quiet-trend-bt.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
