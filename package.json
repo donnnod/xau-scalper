@@ -35,7 +35,11 @@
     "mt5:1h-sweep": "bun run --bun scripts/backtest.ts --source db --asset MT5:XAUUSD --interval 1h --sweep",
     "mt5:1h-edgescan": "bun run --bun scripts/edgescan.ts --asset MT5:XAUUSD --interval 1h",
     "mt5:quiet-trend": "bun run --bun scripts/quiet-trend-bt.ts",
-    "mt5:quiet-trend-daily": "bun run --bun scripts/quiet-trend-daily-bt.ts"
+    "mt5:quiet-trend-daily": "bun run --bun scripts/quiet-trend-daily-bt.ts",
+    "mt5:ticks": "bun run --bun scripts/tick-to-candles.ts",
+    "mt5:import-ticks": "bun run --bun scripts/import-tick-candles.ts",
+    "mt5:5m-edgescan": "bun run --bun scripts/edgescan.ts --asset MT5:XAUUSD --interval 5m",
+    "mt5:5m-backtest": "bun run --bun scripts/backtest.ts --source db --asset MT5:XAUUSD --interval 5m"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
