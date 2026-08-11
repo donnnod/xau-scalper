@@ -99,7 +99,12 @@ function main() {
       continue;
     }
 
-    const assetId = `mt5:${cli.asset}`;
+    // Match the assetId convention used by mt5:sync (server/mt5.ts): an
+    // uppercase "MT5:" prefix. The settings key stays lowercase "mt5:<sym>"
+    // to match how mt5:sync stores its metadata, but the candle rows and the
+    // assetId inside that metadata both use the uppercase prefix so edgescan
+    // and backtest look candles up under the same key they were stored with.
+    const assetId = `MT5:${cli.asset}`;
 
     if (!database.getSetting(`mt5:${cli.asset}`)) {
       const digits = cli.asset.includes("JPY") ? 3 : 2;

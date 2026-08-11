@@ -55,7 +55,6 @@ function main() {
   }
 
   const asset = mt5Asset(meta);
-  console.log(`Looking up candles: asset=${meta.assetId} interval=${cli.interval}`);
   const candles = database.getCandles(meta.assetId, cli.interval, 100_000);
   if (candles.length < 500) {
     console.error(
