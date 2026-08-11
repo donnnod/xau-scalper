@@ -67,10 +67,10 @@ export interface EngineDeps {
   riskManager?: RiskManager;
 }
 
-const SIGNAL_INTERVAL = "5m";
-const CONFIRM_INTERVAL = "15m";
-/** H1 bars used for the structural regime filter in quiet-trend mode. */
-const REGIME_INTERVAL = "1h";
+const SIGNAL_INTERVAL = "30m";
+const CONFIRM_INTERVAL = "1h";
+/** H4 bars used for the structural regime filter in quiet-trend mode. */
+const REGIME_INTERVAL = "4h";
 /** Bars of history kept per asset/interval. 200 covers every indicator warm-up. */
 const HISTORY_BARS = 200;
 /** H1 bars kept for the regime filter — needs EMA(50) + buffer + some extra. */
@@ -168,41 +168,41 @@ export async function generateForAsset(
   const { db } = deps;
   const now = deps.now?.() ?? Date.now();
 
-  const candles5m = await syncCandles(deps, asset, SIGNAL_INTERVAL);
-  const candles15m = await syncCandles(deps, asset, CONFIRM_INTERVAL);
+  const signalBars = await syncCandles(deps, asset, SIGNAL_INTERVAL);
+  const confirmBars = await syncCandles(deps, asset, CONFIRM_INTERVAL);
 
   // Quiet-trend uses H1 for the structural regime filter. Fetch separately so
   // other models don't pay for the extra request.
-  let candlesH1: Candle[] | null = null;
+  let regimeBars: Candle[] | null = null;
   if (asset.model === "quiet-trend") {
-    candlesH1 = await syncCandles(deps, asset, REGIME_INTERVAL);
+    regimeBars = await syncCandles(deps, asset, REGIME_INTERVAL);
     // Trim to the window the regime filter needs — avoid growing without bound.
-    if (candlesH1.length > REGIME_BARS) {
-      candlesH1 = candlesH1.slice(-REGIME_BARS);
+    if (regimeBars.length > REGIME_BARS) {
+      regimeBars = regimeBars.slice(-REGIME_BARS);
     }
   }
 
-  const price = candles5m.at(-1)?.close;
+  const price = signalBars.at(-1)?.close;
   if (price === undefined) return null;
 
-  const a5 = analyzeFor(asset, candles5m);
-  const a15 = analyzeFor(asset, candles15m);
+  const a5 = analyzeFor(asset, signalBars);
+  const a15 = analyzeFor(asset, confirmBars);
 
   db.logJournal({
     eventType: "ENGINE_RUN",
     asset: asset.id,
     price,
     details:
-      `[${asset.displaySymbol}] 5m: ${a5?.bias ?? "N/A"} ${a5?.grade ?? "-"} ` +
-      `(${a5?.confidence ?? 0}%) | 15m: ${a15?.bias ?? "N/A"} ${a15?.grade ?? "-"}`,
+      `[${asset.displaySymbol}] ${SIGNAL_INTERVAL}: ${a5?.bias ?? "N/A"} ${a5?.grade ?? "-"} ` +
+      `(${a5?.confidence ?? 0}%) | ${CONFIRM_INTERVAL}: ${a15?.bias ?? "N/A"} ${a15?.grade ?? "-"}`,
     metadata: {
-      fiveMin: a5 && {
+      signal: a5 && {
         bias: a5.bias,
         grade: a5.grade,
         confidence: a5.confidence,
         indicators: "indicators" in a5 ? a5.indicators : undefined,
       },
-      fifteenMin: a15 && { bias: a15.bias, grade: a15.grade },
+      confirm: a15 && { bias: a15.bias, grade: a15.grade },
     },
   });
 
@@ -213,8 +213,8 @@ export async function generateForAsset(
   // H1 structural regime filter (quiet-trend model only).
   // If the 1H is in a structural trend, only signals aligned with it pass.
   // NEUTRAL (price inside EMA buffer) → no veto, both directions allowed.
-  if (asset.model === "quiet-trend" && candlesH1 !== null) {
-    const regime = htfRegime(candlesH1);
+  if (asset.model === "quiet-trend" && regimeBars !== null) {
+    const regime = htfRegime(regimeBars);
     if (regime !== null && regime !== a5.direction) {
       db.logJournal({
         eventType: "SIGNAL_BLOCKED",
@@ -292,9 +292,9 @@ export async function generateForAsset(
     confidence,
     grade,
     reason:
-      `[ENGINE] ${a5.reason}${a15 ? " · 15m confirms" : ""}` +
+      `[ENGINE] ${a5.reason}${a15 ? ` · ${CONFIRM_INTERVAL} confirms` : ""}` +
       (decision.hedge ? " · hedges the open book" : ""),
-    timeframe: a15 ? "5m+15m" : "5m",
+    timeframe: a15 ? `${SIGNAL_INTERVAL}+${CONFIRM_INTERVAL}` : SIGNAL_INTERVAL,
     bias: a5.bias,
     biasStrength: a5.biasStrength,
     spotPrice: price,

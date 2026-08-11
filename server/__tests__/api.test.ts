@@ -378,9 +378,9 @@ describe("portfolio", () => {
         close,
         volume: 1,
       });
-      db.saveCandles("BTCUSDT", "5m", [bar(50_000 * (1 + wave * 0.01))]);
-      db.saveCandles("ETHUSDT", "5m", [bar(3_000 * (1 + wave * 0.01))]);
-      db.saveCandles("PAXGUSDT", "5m", [bar(3_400 / (1 + wave * 0.01))]);
+      db.saveCandles("BTCUSDT", "30m", [bar(50_000 * (1 + wave * 0.01))]);
+      db.saveCandles("ETHUSDT", "30m", [bar(3_000 * (1 + wave * 0.01))]);
+      db.saveCandles("PAXGUSDT", "30m", [bar(3_400 / (1 + wave * 0.01))]);
     }
 
     const b = await body<Portfolio>(call("/api/portfolio"));
@@ -424,8 +424,8 @@ describe("portfolio", () => {
         close,
         volume: 1,
       });
-      db.saveCandles("BTCUSDT", "5m", [bar(50_000 * (1 + wave * 0.01))]);
-      db.saveCandles("PAXGUSDT", "5m", [bar(3_400 / (1 + wave * 0.01))]);
+      db.saveCandles("BTCUSDT", "30m", [bar(50_000 * (1 + wave * 0.01))]);
+      db.saveCandles("PAXGUSDT", "30m", [bar(3_400 / (1 + wave * 0.01))]);
     }
     const measuredBook = await body<Portfolio>(call("/api/portfolio"));
 
@@ -484,11 +484,11 @@ describe("candles", () => {
   });
 
   test("returns stored candles for an asset and interval", async () => {
-    db.saveCandles("BTCUSDT", "5m", [
+    db.saveCandles("BTCUSDT", "30m", [
       { time: 300, open: 1, high: 2, low: 0.5, close: 1.5, volume: 1 },
     ]);
     const b = await body<{ candles: unknown[] }>(
-      call("/api/candles?asset=BTCUSDT&interval=5m"),
+      call("/api/candles?asset=BTCUSDT&interval=30m"),
     );
     expect(b.candles).toHaveLength(1);
   });
