@@ -12,7 +12,7 @@
  *   bun run --bun scripts/import-tick-candles.ts [--in tmp/xauusd_5m.json] [--asset XAUUSD] [--interval 5m]
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { db as openDb } from "../server/db";
 import type { TickCandleOutput } from "./tick-to-candles";
 
@@ -32,6 +32,19 @@ function intervalFromSec(sec: number): string {
 function main() {
   const inFile = flag("in") ?? "tmp/xauusd_5m.json";
   const asset = flag("asset") ?? "XAUUSD";
+
+  // This file is the OUTPUT of tick-to-candles.ts, and tmp/ is gitignored, so
+  // a fresh clone never has it. Say that, rather than throwing a raw ENOENT.
+  if (!existsSync(inFile)) {
+    console.error(`No such file: ${inFile}`);
+    console.error(
+      "\nThat file is produced by the tick resampler — run it first:\n" +
+        "  bun run mt5:ticks --file /path/to/your/ticks.csv\n" +
+        "\nThen re-run this import (or pass --in <path> if you wrote it elsewhere).",
+    );
+    process.exit(1);
+  }
+
   const parsed = JSON.parse(readFileSync(inFile, "utf-8")) as TickCandleOutput;
 
   const interval = flag("interval") ?? intervalFromSec(parsed.candleIntervalSec);
