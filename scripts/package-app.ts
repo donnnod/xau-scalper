@@ -46,6 +46,12 @@ async function main() {
   const makeApp = arg("app") !== undefined;
   const outDir = arg("out") ?? "release";
 
+  // Bun appends .exe to compiled Windows binaries; a bundle for Windows also
+  // wants a double-clickable launcher, so treat that target specially.
+  const isWindows =
+    targetName === "windows-x64" ||
+    (!targetName && process.platform === "win32");
+
   if (targetName && !TARGETS[targetName]) {
     console.error(
       `Unknown target "${targetName}". Choose one of: ${Object.keys(TARGETS).join(", ")}`,
@@ -70,7 +76,8 @@ async function main() {
     : outDir;
   mkdirSync(root, { recursive: true });
 
-  const binaryPath = join(root, BINARY);
+  const binaryName = isWindows ? `${BINARY}.exe` : BINARY;
+  const binaryPath = join(root, binaryName);
   const compileArgs = [
     "build",
     "--compile",
@@ -152,6 +159,28 @@ wait \${SERVER_PID}
     );
   }
 
+  if (isWindows) {
+    // A .bat launcher gives Windows the same one-double-click start as the
+    // macOS .app: keep data outside the (upgrade-replaced) program folder,
+    // start the server, wait for it to answer, then open the dashboard.
+    await writeFile(
+      join(root, "Start XAU Scalper.bat"),
+      [
+        "@echo off",
+        'set "HERE=%~dp0"',
+        'set "DATA_DIR=%LOCALAPPDATA%\\XAU Scalper"',
+        'if not exist "%DATA_DIR%" mkdir "%DATA_DIR%"',
+        'set "TEO_DB_PATH=%DATA_DIR%\\teo.db"',
+        'if "%TEO_PORT%"=="" set "TEO_PORT=4000"',
+        `start "" /b "%HERE%${binaryName}"`,
+        "echo Starting XAU Scalper...",
+        "timeout /t 3 /nobreak >nul",
+        'start "" "http://127.0.0.1:%TEO_PORT%"',
+        "",
+      ].join("\r\n"),
+    );
+  }
+
   const size = Bun.spawnSync(["du", "-sh", outDir])
     .stdout.toString()
     .split("\t")[0];
@@ -166,6 +195,15 @@ locally it runs; to distribute it you need an Apple Developer ID:
 
   codesign --deep --force --sign "Developer ID Application: YOUR NAME" \\
     "${outDir}/${APP_NAME}.app"
+`);
+  } else if (isWindows) {
+    console.log(`
+Double-click "${outDir}\\Start XAU Scalper.bat" on the Windows machine, or run:
+
+  ${outDir}\\${binaryName}
+
+Ship the whole ${outDir}\\ folder (the .exe needs the dist\\ folder beside it).
+Put it on the same PC as MetaTrader 5 so the file bridge can reach the terminal.
 `);
   } else {
     console.log(`

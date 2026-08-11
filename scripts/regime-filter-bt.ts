@@ -52,6 +52,9 @@ function backtest(
   useRegimeFilter: boolean,
 ): Trade[] {
   const cfg = DEFAULT_QUIET_TREND_CONFIG;
+  // QuietTrendConfig carries no hold cap; 24 H1 bars (~one trading day) matches
+  // the max-bars exit the quiet-trend sweep found best on this asset.
+  const MAX_HOLD_BARS = 24;
   const trades: Trade[] = [];
   const closes = candles.map(c => c.close);
   const ema50 = calcEMA(closes, cfg.emaPeriod);
@@ -96,7 +99,7 @@ function backtest(
     let exitKind: Trade["exitKind"] = "TIME";
     let barsHeld = 0;
 
-    for (let j = i + 1; j < Math.min(i + cfg.maxHoldBars + 1, candles.length); j++) {
+    for (let j = i + 1; j < Math.min(i + MAX_HOLD_BARS + 1, candles.length); j++) {
       barsHeld = j - i;
       const bar = candles[j];
       if (dir === "LONG") {
@@ -108,7 +111,7 @@ function backtest(
       }
     }
     if (exitKind === "TIME") {
-      const last = Math.min(i + cfg.maxHoldBars, candles.length - 1);
+      const last = Math.min(i + MAX_HOLD_BARS, candles.length - 1);
       exitPrice = candles[last].close;
       barsHeld = last - i;
     }

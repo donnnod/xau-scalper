@@ -165,11 +165,15 @@ async function main() {
     `\nScanning ${hypotheses.length} macro hypotheses with H=${HORIZON}h horizon...\n`,
   );
 
-  const results = scanEdges(candles, hypotheses, HORIZON, 6, asset.costs);
-  const adjAlpha =
-    1 - Math.pow(1 - 0.05, 1 / Math.max(hypotheses.length, 1));
+  const report = scanEdges(candles, hypotheses, asset.costs, {
+    horizonBars: HORIZON,
+    windows: 6,
+  });
+  const results = report.results;
 
-  console.log(`Šidák-adjusted α for ${hypotheses.length} tests: ${adjAlpha.toFixed(5)}\n`);
+  console.log(
+    `Šidák-adjusted α for ${hypotheses.length} tests: ${report.adjustedAlpha.toFixed(5)}\n`,
+  );
   console.log(
     "─".repeat(90),
   );
@@ -186,7 +190,7 @@ async function main() {
       continue;
     }
 
-    const passes = survives(r, adjAlpha);
+    const passes = survives(r, report);
     const star = passes ? " ✓ SURVIVES" : "";
     console.log(
       `${r.name.padEnd(28)} ${String(r.n).padStart(5)} ${r.meanNet >= 0 ? "+" : ""}${r.meanNet.toFixed(3).padStart(7)} ${r.pValue.toFixed(4).padStart(10)} ${`${r.windowsPositive}/6`.padStart(8)}${star}`,
@@ -195,7 +199,7 @@ async function main() {
 
   console.log("─".repeat(90));
 
-  const survivors = results.filter(r => r.n >= MIN_OCCURRENCES && survives(r, adjAlpha));
+  const survivors = results.filter(r => r.n >= MIN_OCCURRENCES && survives(r, report));
   if (survivors.length === 0) {
     console.log(
       "\nNo macro hypothesis survives correction. The textbook relationships may not be strong enough at H1 resolution to gate this strategy.",

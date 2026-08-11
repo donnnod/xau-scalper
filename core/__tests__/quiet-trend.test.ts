@@ -1,9 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-  analyzeQuietTrend,
-  DEFAULT_QUIET_TREND_CONFIG,
-  htfRegime,
-} from "../quiet-trend";
+import { analyzeQuietTrend, htfRegime } from "../quiet-trend";
 import type { Candle } from "../strategy";
 
 function candles(
