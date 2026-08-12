@@ -103,6 +103,10 @@ const BINANCE_INTERVALS: Record<string, string> = {
   "3m": "3m",
   "5m": "5m",
   "15m": "15m",
+  "30m": "30m",
+  "1h": "1h",
+  "4h": "4h",
+  "1d": "1d",
 };
 
 export async function fetchGoldCandles(

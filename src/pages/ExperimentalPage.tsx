@@ -39,6 +39,13 @@ import {
   fetchGoldPrice,
   type PriceData,
 } from "@/lib/priceApi";
+import {
+  emptyByTf,
+  TF_LABELS,
+  TF_SHOW_BB,
+  TIMEFRAMES,
+  type Timeframe,
+} from "@/lib/timeframes";
 
 // Error boundary
 class ErrorBoundary extends Component<
@@ -79,14 +86,10 @@ class ErrorBoundary extends Component<
   }
 }
 
-type Timeframe = "1m" | "3m" | "5m" | "15m";
-
 function ExperimentalContent() {
   const [priceData, setPriceData] = useState<PriceData | null>(null);
-  const [candles1m, setCandles1m] = useState<Candle[]>([]);
-  const [candles3m, setCandles3m] = useState<Candle[]>([]);
-  const [candles5m, setCandles5m] = useState<Candle[]>([]);
-  const [candles15m, setCandles15m] = useState<Candle[]>([]);
+  const [candlesByTf, setCandlesByTf] =
+    useState<Record<Timeframe, Candle[]>>(emptyByTf);
   const [activeTimeframe, setActiveTimeframe] = useState<Timeframe>("5m");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -95,18 +98,19 @@ function ExperimentalContent() {
   const loadData = useCallback(async (showRefresh = false) => {
     try {
       if (showRefresh) setRefreshing(true);
-      const [priceResult, c1, c3, c5, c15] = await Promise.allSettled([
+      const [priceResult, ...candleResults] = await Promise.allSettled([
         fetchGoldPrice(),
-        fetchGoldCandles("1m"),
-        fetchGoldCandles("3m"),
-        fetchGoldCandles("5m"),
-        fetchGoldCandles("15m"),
+        ...TIMEFRAMES.map(tf => fetchGoldCandles(tf)),
       ]);
       if (priceResult.status === "fulfilled") setPriceData(priceResult.value);
-      if (c1.status === "fulfilled") setCandles1m(c1.value);
-      if (c3.status === "fulfilled") setCandles3m(c3.value);
-      if (c5.status === "fulfilled") setCandles5m(c5.value);
-      if (c15.status === "fulfilled") setCandles15m(c15.value);
+      setCandlesByTf(prev => {
+        const next = { ...prev };
+        TIMEFRAMES.forEach((tf, i) => {
+          const r = candleResults[i];
+          if (r.status === "fulfilled") next[tf] = r.value;
+        });
+        return next;
+      });
       setLastRefresh(new Date());
     } catch (err) {
       console.error("Failed to load data:", err);
@@ -123,43 +127,19 @@ function ExperimentalContent() {
   }, [loadData]);
 
   // Experimental analysis per timeframe
-  const exp1m = useMemo(() => {
-    try {
-      return analyzeExperimental(candles1m);
-    } catch {
-      return null;
+  const expByTf = useMemo(() => {
+    const out = {} as Record<Timeframe, ReturnType<typeof analyzeExperimental>>;
+    for (const tf of TIMEFRAMES) {
+      try {
+        out[tf] = analyzeExperimental(candlesByTf[tf]);
+      } catch {
+        out[tf] = null;
+      }
     }
-  }, [candles1m]);
-  const exp3m = useMemo(() => {
-    try {
-      return analyzeExperimental(candles3m);
-    } catch {
-      return null;
-    }
-  }, [candles3m]);
-  const exp5m = useMemo(() => {
-    try {
-      return analyzeExperimental(candles5m);
-    } catch {
-      return null;
-    }
-  }, [candles5m]);
-  const exp15m = useMemo(() => {
-    try {
-      return analyzeExperimental(candles15m);
-    } catch {
-      return null;
-    }
-  }, [candles15m]);
+    return out;
+  }, [candlesByTf]);
 
-  const activeExp =
-    activeTimeframe === "1m"
-      ? exp1m
-      : activeTimeframe === "3m"
-        ? exp3m
-        : activeTimeframe === "5m"
-          ? exp5m
-          : exp15m;
+  const activeExp = expByTf[activeTimeframe];
 
   if (loading) {
     return (
@@ -244,32 +224,12 @@ function ExperimentalContent() {
 
       {/* Multi-TF Charts */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        {[
-          {
-            tf: "1m" as Timeframe,
-            label: "1 MIN",
-            candles: candles1m,
-            exp: exp1m,
-          },
-          {
-            tf: "3m" as Timeframe,
-            label: "3 MIN",
-            candles: candles3m,
-            exp: exp3m,
-          },
-          {
-            tf: "5m" as Timeframe,
-            label: "5 MIN",
-            candles: candles5m,
-            exp: exp5m,
-          },
-          {
-            tf: "15m" as Timeframe,
-            label: "15 MIN",
-            candles: candles15m,
-            exp: exp15m,
-          },
-        ].map(({ tf, label, candles, exp }) => (
+        {TIMEFRAMES.map(tf => ({
+          tf,
+          label: TF_LABELS[tf],
+          candles: candlesByTf[tf],
+          exp: expByTf[tf],
+        })).map(({ tf, label, candles, exp }) => (
           <div
             key={tf}
             role="button"
@@ -286,7 +246,7 @@ function ExperimentalContent() {
               label={label}
               height={200}
               showEMA
-              showBB={tf === "15m"}
+              showBB={TF_SHOW_BB[tf]}
             />
             {/* Supertrend badge on chart */}
             {exp && (
@@ -325,10 +285,10 @@ function ExperimentalContent() {
 
       {/* Multi-TF Experimental Confluence */}
       <ExperimentalConfluence
-        exp1m={exp1m}
-        exp3m={exp3m}
-        exp5m={exp5m}
-        exp15m={exp15m}
+        exp1m={expByTf["1m"]}
+        exp3m={expByTf["3m"]}
+        exp5m={expByTf["5m"]}
+        exp15m={expByTf["15m"]}
       />
     </div>
   );

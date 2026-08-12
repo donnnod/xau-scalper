@@ -8,7 +8,9 @@ interface ScalpingToolbarProps {
   analysis3m: ScalpAnalysis | null;
   analysis5m: ScalpAnalysis | null;
   analysis15m: ScalpAnalysis | null;
-  activeTimeframe: "1m" | "3m" | "5m" | "15m";
+  activeTimeframe: string;
+  /** Analysis for the active timeframe, which may be one the strip omits. */
+  activeAnalysis: ScalpAnalysis | null;
 }
 
 const BIAS_COLORS = {
@@ -35,16 +37,8 @@ export function ScalpingToolbar({
   analysis5m,
   analysis15m,
   activeTimeframe,
+  activeAnalysis,
 }: ScalpingToolbarProps) {
-  const activeAnalysis =
-    activeTimeframe === "1m"
-      ? analysis1m
-      : activeTimeframe === "3m"
-        ? analysis3m
-        : activeTimeframe === "5m"
-          ? analysis5m
-          : analysis15m;
-
   if (!activeAnalysis) {
     return (
       <div className="rounded-xl bg-card border border-border p-4">
