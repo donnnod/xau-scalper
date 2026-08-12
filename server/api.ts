@@ -40,6 +40,30 @@ const json = (body: unknown, status = 200) =>
 
 const bad = (message: string, status = 400) => json({ error: message }, status);
 
+/**
+ * Read the TeoExporter EA source for the download endpoint.
+ *
+ * Resolved at request time across the two layouts this server runs in: from
+ * source (`bun run start`, the file sits at repo-root/mt5) and compiled
+ * (`bun build --compile`, where import.meta.dir points into the binary's
+ * virtual filesystem and the assets live next to the executable). Returns null
+ * if no candidate exists rather than throwing, so a missing file is a clean
+ * 404 rather than a crashed request.
+ */
+async function readExporterSource(): Promise<string | null> {
+  const { dirname, join } = await import("node:path");
+  const candidates = [
+    join(import.meta.dir, "..", "mt5", "TeoExporter.mq5"),
+    join(dirname(process.execPath), "mt5", "TeoExporter.mq5"),
+    join(process.cwd(), "mt5", "TeoExporter.mq5"),
+  ];
+  for (const path of candidates) {
+    const file = Bun.file(path);
+    if (await file.exists()) return file.text();
+  }
+  return null;
+}
+
 /** Parse a positive integer query param, clamped, with a default. */
 function intParam(
   url: URL,
@@ -575,6 +599,23 @@ export async function handleApi(
     // MT5 hides its files under a hashed directory inside a Wine bottle.
     const dir = findExportDir();
     return json({ directory: dir, found: dir !== null });
+  }
+
+  // ─── The Expert Advisor download ───
+  //
+  // The Automation page hands the operator the exact EA the bridge expects,
+  // so there is never a version mismatch between the file they drag onto a
+  // chart and the order/spec format this server reads back.
+  if (path === "/api/mt5/exporter") {
+    const source = await readExporterSource();
+    if (source === null)
+      return bad("Exporter source not found on server.", 404);
+    return new Response(source, {
+      headers: {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Content-Disposition": 'attachment; filename="TeoExporter.mq5"',
+      },
+    });
   }
 
   // ─── Strategy discovery ───

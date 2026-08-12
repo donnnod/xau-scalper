@@ -7,6 +7,7 @@ import {
   Settings,
   Shield,
   Sparkles,
+  Zap,
 } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 import { APP_NAME } from "@/lib/constants";
@@ -39,6 +40,7 @@ const trackingNav = [
 ];
 
 const systemNav = [
+  { href: "/automation", label: "Automation", icon: Zap },
   { href: "/research", label: "Find Strategies", icon: Sparkles },
   { href: "/settings", label: "Settings", icon: Settings },
 ];

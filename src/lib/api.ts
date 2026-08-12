@@ -532,6 +532,9 @@ export const api = {
   defaultConfig: () => get<AppConfig>("/api/config/defaults"),
   resetConfig: () => post<AppConfig>("/api/config/reset"),
 
+  /** URL of the TeoExporter EA download, for a plain anchor link. */
+  mt5ExporterUrl: () => "/api/mt5/exporter",
+
   mt5Status: () => get<Mt5Status>("/api/mt5/status"),
   mt5Discover: () =>
     get<{ directory: string | null; found: boolean }>("/api/mt5/discover"),
