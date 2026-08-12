@@ -17,7 +17,7 @@ export function NewsShield() {
     );
   }
 
-  const events = news.events || [];
+  const events = Array.isArray(news.events) ? news.events : [];
   const upcomingEvents = events.slice(0, 8);
 
   return (

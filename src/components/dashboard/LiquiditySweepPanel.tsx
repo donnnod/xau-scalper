@@ -17,7 +17,13 @@ export function LiquiditySweepPanel() {
     );
   }
 
-  const { sweeps, supportLevels, resistanceLevels } = sweepData;
+  const sweeps = Array.isArray(sweepData.sweeps) ? sweepData.sweeps : [];
+  const supportLevels = Array.isArray(sweepData.supportLevels)
+    ? sweepData.supportLevels
+    : [];
+  const resistanceLevels = Array.isArray(sweepData.resistanceLevels)
+    ? sweepData.resistanceLevels
+    : [];
   const actionable = sweeps.filter((s: any) => s.actionable);
 
   return (
