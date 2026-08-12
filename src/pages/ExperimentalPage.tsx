@@ -21,6 +21,11 @@ import {
   useState,
 } from "react";
 import { toast } from "sonner";
+import {
+  AssetSwitcher,
+  GOLD_ASSET,
+  type SelectedAsset,
+} from "@/components/dashboard/AssetSwitcher";
 import { MiniChart } from "@/components/dashboard/MultiTimeframeView";
 import { PriceTicker } from "@/components/dashboard/PriceTicker";
 import { Button } from "@/components/ui/button";
@@ -91,33 +96,46 @@ function ExperimentalContent() {
   const [candlesByTf, setCandlesByTf] =
     useState<Record<Timeframe, Candle[]>>(emptyByTf);
   const [activeTimeframe, setActiveTimeframe] = useState<Timeframe>("5m");
+  const [asset, setAsset] = useState<SelectedAsset>(GOLD_ASSET);
+  const assetId = asset.id;
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
 
-  const loadData = useCallback(async (showRefresh = false) => {
-    try {
-      if (showRefresh) setRefreshing(true);
-      const [priceResult, ...candleResults] = await Promise.allSettled([
-        fetchGoldPrice(),
-        ...TIMEFRAMES.map(tf => fetchGoldCandles(tf)),
-      ]);
-      if (priceResult.status === "fulfilled") setPriceData(priceResult.value);
-      setCandlesByTf(prev => {
-        const next = { ...prev };
-        TIMEFRAMES.forEach((tf, i) => {
-          const r = candleResults[i];
-          if (r.status === "fulfilled") next[tf] = r.value;
+  const loadData = useCallback(
+    async (showRefresh = false) => {
+      try {
+        if (showRefresh) setRefreshing(true);
+        const [priceResult, ...candleResults] = await Promise.allSettled([
+          fetchGoldPrice(assetId),
+          ...TIMEFRAMES.map(tf => fetchGoldCandles(tf, 200, assetId)),
+        ]);
+        if (priceResult.status === "fulfilled") setPriceData(priceResult.value);
+        setCandlesByTf(prev => {
+          const next = { ...prev };
+          TIMEFRAMES.forEach((tf, i) => {
+            const r = candleResults[i];
+            if (r.status === "fulfilled") next[tf] = r.value;
+          });
+          return next;
         });
-        return next;
-      });
-      setLastRefresh(new Date());
-    } catch (err) {
-      console.error("Failed to load data:", err);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
+        setLastRefresh(new Date());
+      } catch (err) {
+        console.error("Failed to load data:", err);
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    },
+    [assetId],
+  );
+
+  // Switching asset clears old candles and shows the skeleton.
+  const selectAsset = useCallback((a: SelectedAsset) => {
+    setAsset(a);
+    setCandlesByTf(emptyByTf());
+    setPriceData(null);
+    setLoading(true);
   }, []);
 
   useEffect(() => {
@@ -202,7 +220,13 @@ function ExperimentalContent() {
       </div>
 
       {/* Price Ticker */}
-      <PriceTicker data={priceData} />
+      <AssetSwitcher selected={asset} onSelect={selectAsset} accent="#AB47BC" />
+
+      <PriceTicker
+        data={priceData}
+        symbol={asset.symbol}
+        precision={asset.precision}
+      />
 
       {/* Combined Signal Panel */}
       {activeExp && (

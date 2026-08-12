@@ -6,6 +6,11 @@ import {
   useMemo,
   useState,
 } from "react";
+import {
+  AssetSwitcher,
+  GOLD_ASSET,
+  type SelectedAsset,
+} from "@/components/dashboard/AssetSwitcher";
 import { LiquiditySweepPanel } from "@/components/dashboard/LiquiditySweepPanel";
 import { MacroCorrelation } from "@/components/dashboard/MacroCorrelation";
 import { MarketSessionBar } from "@/components/dashboard/MarketSessionBar";
@@ -85,11 +90,23 @@ function DashboardContent() {
   const [candlesByTf, setCandlesByTf] =
     useState<Record<Timeframe, Candle[]>>(emptyByTf);
   const [activeTimeframe, setActiveTimeframe] = useState<Timeframe>("5m");
+  const [asset, setAsset] = useState<SelectedAsset>(GOLD_ASSET);
+  const assetId = asset.id;
 
   const setTf = useCallback((tf: Timeframe, c: Candle[]) => {
     setCandlesByTf(prev => ({ ...prev, [tf]: c }));
   }, []);
   const [loading, setLoading] = useState(true);
+
+  // Switching asset clears the old candles and shows the skeleton, so the new
+  // instrument never renders on top of the previous one's chart data.
+  const selectAsset = useCallback((a: SelectedAsset) => {
+    setAsset(a);
+    setCandlesByTf(emptyByTf());
+    setPriceData(null);
+    setLoading(true);
+  }, []);
+
   const [refreshing, setRefreshing] = useState(false);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [dataSource, setDataSource] = useState<string>("");
@@ -100,8 +117,8 @@ function DashboardContent() {
       try {
         if (showRefresh) setRefreshing(true);
         const [priceResult, candleResult] = await Promise.allSettled([
-          fetchGoldPrice(),
-          fetchGoldCandles(tf),
+          fetchGoldPrice(assetId),
+          fetchGoldCandles(tf, 200, assetId),
         ]);
         if (priceResult.status === "fulfilled") {
           setPriceData(priceResult.value);
@@ -118,7 +135,7 @@ function DashboardContent() {
         setRefreshing(false);
       }
     },
-    [setTf],
+    [setTf, assetId],
   );
 
   // Phase 2: Background-load remaining timeframes (non-blocking)
@@ -126,14 +143,14 @@ function DashboardContent() {
     async (activeTf: Timeframe) => {
       const remaining = TIMEFRAMES.filter(tf => tf !== activeTf);
       const results = await Promise.allSettled(
-        remaining.map(tf => fetchGoldCandles(tf)),
+        remaining.map(tf => fetchGoldCandles(tf, 200, assetId)),
       );
       remaining.forEach((tf, i) => {
         const r = results[i];
         if (r.status === "fulfilled") setTf(tf, r.value);
       });
     },
-    [setTf],
+    [setTf, assetId],
   );
 
   // Full reload (for refresh button & interval)
@@ -142,8 +159,8 @@ function DashboardContent() {
       try {
         if (showRefresh) setRefreshing(true);
         const [priceResult, ...candleResults] = await Promise.allSettled([
-          fetchGoldPrice(),
-          ...TIMEFRAMES.map(tf => fetchGoldCandles(tf)),
+          fetchGoldPrice(assetId),
+          ...TIMEFRAMES.map(tf => fetchGoldCandles(tf, 200, assetId)),
         ]);
         if (priceResult.status === "fulfilled") {
           setPriceData(priceResult.value);
@@ -161,7 +178,7 @@ function DashboardContent() {
         setRefreshing(false);
       }
     },
-    [setTf],
+    [setTf, assetId],
   );
 
   // Initial mount: fast critical load, then background rest
@@ -275,10 +292,17 @@ function DashboardContent() {
         </div>
       </div>
 
+      {/* Asset switcher — pick gold or any crypto */}
+      <AssetSwitcher selected={asset} onSelect={selectAsset} />
+
       {/* ④ Price Ticker + Refresh */}
       <div className="flex flex-col sm:flex-row gap-3">
         <div className="flex-1 min-w-0 overflow-hidden">
-          <PriceTicker data={priceData} />
+          <PriceTicker
+            data={priceData}
+            symbol={asset.symbol}
+            precision={asset.precision}
+          />
         </div>
         <div className="flex items-center gap-2 self-end sm:self-center flex-wrap min-w-0">
           {dataSource && (

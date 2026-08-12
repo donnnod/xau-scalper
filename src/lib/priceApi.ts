@@ -112,12 +112,13 @@ const BINANCE_INTERVALS: Record<string, string> = {
 export async function fetchGoldCandles(
   interval: string,
   limit = 200,
+  symbol = "PAXGUSDT",
 ): Promise<Candle[]> {
   const binanceInterval = BINANCE_INTERVALS[interval] || "5m";
   const base = apiBase();
 
   try {
-    const url = `${base}/api/klines?symbol=PAXGUSDT&interval=${binanceInterval}&limit=${limit}`;
+    const url = `${base}/api/klines?symbol=${encodeURIComponent(symbol)}&interval=${binanceInterval}&limit=${limit}`;
     const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
 
     if (!res.ok) throw new Error(`API returned ${res.status}`);
