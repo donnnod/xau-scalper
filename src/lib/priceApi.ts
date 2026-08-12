@@ -118,9 +118,9 @@ export async function fetchGoldCandles(
 
     if (!res.ok) throw new Error(`API returned ${res.status}`);
 
-    // The server returns parsed candles; the venue's array format does not
-    // leak past it.
-    return (await res.json()) as Candle[];
+    const data = await res.json();
+    if (!Array.isArray(data)) return [];
+    return data as Candle[];
   } catch (e: any) {
     console.error(`Failed to fetch candles (${interval}):`, e.message);
     throw e;

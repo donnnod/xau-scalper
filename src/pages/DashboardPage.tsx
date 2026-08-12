@@ -45,7 +45,7 @@ class ErrorBoundary extends Component<
     this.state = { hasError: false, error: "" };
   }
   static getDerivedStateFromError(error: Error) {
-    return { hasError: true, error: error.message };
+    return { hasError: true, error: `${error.message}\n${error.stack ?? ""}` };
   }
   render() {
     if (this.state.hasError) {
@@ -54,9 +54,9 @@ class ErrorBoundary extends Component<
           <span className="text-lg font-mono text-[#D4A843]">
             ⚠ Dashboard Error
           </span>
-          <span className="text-sm text-muted-foreground text-center max-w-md">
+          <pre className="text-xs text-muted-foreground text-left max-w-2xl overflow-auto whitespace-pre-wrap">
             {this.state.error || "Something went wrong."}
-          </span>
+          </pre>
           <button
             onClick={() => {
               this.setState({ hasError: false, error: "" });
