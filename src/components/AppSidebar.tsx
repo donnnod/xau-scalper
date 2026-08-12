@@ -1,5 +1,6 @@
 import {
   BarChart3,
+  Bitcoin,
   FlaskConical,
   LayoutDashboard,
   Lightbulb,
@@ -26,6 +27,7 @@ import {
 
 const mainNav = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/crypto", label: "Crypto", icon: Bitcoin },
   { href: "/experimental", label: "Experimental Lab", icon: FlaskConical },
 ];
 

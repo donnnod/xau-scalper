@@ -1,4 +1,5 @@
 export { AutomationPage } from "./AutomationPage";
+export { CryptoPage } from "./CryptoPage";
 export { default as DashboardPage } from "./DashboardPage";
 export { default as ExperimentalPage } from "./ExperimentalPage";
 export { PerformanceTrackerPage } from "./PerformanceTrackerPage";

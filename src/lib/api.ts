@@ -250,6 +250,15 @@ export interface AssetInfo {
   dataSource: "binance" | "mt5";
 }
 
+export interface Ticker {
+  symbol: string;
+  price: number;
+  high24h: number;
+  low24h: number;
+  change24h: number;
+  changePct24h: number;
+}
+
 // ─── Configuration ───
 //
 // These mirror core/config.ts. Duplicated rather than imported because the UI
@@ -509,6 +518,10 @@ export const api = {
     get<{ byAsset: AssetPerformance[] }>(`/api/performance${q(opts)}`),
 
   portfolio: () => get<Portfolio>("/api/portfolio"),
+
+  /** 24h ticker stats for the given asset ids (exchange-fed assets only). */
+  prices: (ids: string[]) =>
+    get<{ tickers: Ticker[] }>(`/api/prices${q({ symbols: ids.join(",") })}`),
 
   candles: (asset: string, interval = "5m", limit = 200) =>
     get<{ asset: string; interval: string; candles: Candle[] }>(

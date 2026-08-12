@@ -6,6 +6,7 @@ import { ThemeProvider } from "./contexts/ThemeContext";
 import { TimezoneProvider } from "./contexts/TimezoneContext";
 import {
   AutomationPage,
+  CryptoPage,
   DashboardPage,
   ExperimentalPage,
   PerformanceTrackerPage,
@@ -32,6 +33,7 @@ function App() {
               <Route path="/risk" element={<RiskManagerPage />} />
               <Route path="/automation" element={<AutomationPage />} />
               <Route path="/experimental" element={<ExperimentalPage />} />
+              <Route path="/crypto" element={<CryptoPage />} />
               <Route path="/research" element={<ResearchPage />} />
               <Route path="/settings" element={<SettingsPage />} />
             </Route>
