@@ -16,6 +16,10 @@ export type EventKind =
   | "prices"
   | "regime"
   | "engine"
+  | "config"
+  | "candles"
+  | "mt5"
+  | "research"
   | "risk"
   | "hello";
 
