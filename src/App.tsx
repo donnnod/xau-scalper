@@ -6,6 +6,7 @@ import { ThemeProvider } from "./contexts/ThemeContext";
 import { TimezoneProvider } from "./contexts/TimezoneContext";
 import {
   AutomationPage,
+  ChartsPanelPage,
   CryptoPage,
   DashboardPage,
   ExperimentalPage,
@@ -34,6 +35,7 @@ function App() {
               <Route path="/automation" element={<AutomationPage />} />
               <Route path="/experimental" element={<ExperimentalPage />} />
               <Route path="/crypto" element={<CryptoPage />} />
+              <Route path="/charts" element={<ChartsPanelPage />} />
               <Route path="/research" element={<ResearchPage />} />
               <Route path="/settings" element={<SettingsPage />} />
             </Route>

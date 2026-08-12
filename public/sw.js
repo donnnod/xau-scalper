@@ -32,7 +32,8 @@ self.addEventListener("fetch", event => {
   if (
     url.pathname.startsWith("/api") ||
     url.hostname.includes("convex") ||
-    url.hostname.includes("binance")
+    url.hostname.includes("binance") ||
+    url.hostname.includes("tradingview")
   ) {
     return;
   }

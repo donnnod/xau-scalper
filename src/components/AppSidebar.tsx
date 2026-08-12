@@ -3,6 +3,7 @@ import {
   Bitcoin,
   FlaskConical,
   LayoutDashboard,
+  LayoutGrid,
   Lightbulb,
   ScrollText,
   Settings,
@@ -28,6 +29,7 @@ import {
 const mainNav = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/crypto", label: "Crypto", icon: Bitcoin },
+  { href: "/charts", label: "Charts Panel", icon: LayoutGrid },
   { href: "/experimental", label: "Experimental Lab", icon: FlaskConical },
 ];
 
