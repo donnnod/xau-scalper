@@ -30,7 +30,13 @@ import { summariseByRegime } from "../core/memory";
 import { averageConcurrency, summarise } from "../core/portfolio";
 import { assessSignificance, effectiveSampleSize } from "../core/significance";
 import { DEFAULT_STRATEGY_CONFIG, type StrategyConfig } from "../core/strategy";
-import { type AgentTurn, runAgent } from "./agent";
+import {
+  type AgentProviderId,
+  type AgentTurn,
+  publicAgentConfig,
+  runAgent,
+  saveAgentConfig,
+} from "./agent";
 import { ConfigError, ConfigStore } from "./config";
 import type { Db } from "./db";
 import { correlationsFrom, openExposures } from "./engine";
@@ -786,6 +792,28 @@ export async function handleApi(
     } catch (e) {
       return bad(e instanceof Error ? e.message : "Agent failed", 502);
     }
+  }
+
+  if (path === "/api/agent/config" && req.method === "GET") {
+    return json(publicAgentConfig(db));
+  }
+
+  if (path === "/api/agent/config" && req.method === "POST") {
+    const body = await readBody(req);
+    if (body instanceof Response) return body;
+    const patch: {
+      provider?: AgentProviderId;
+      baseUrl?: string;
+      model?: string;
+      apiKey?: string;
+    } = {};
+    if (typeof body.provider === "string")
+      patch.provider = body.provider as AgentProviderId;
+    if (typeof body.baseUrl === "string") patch.baseUrl = body.baseUrl.trim();
+    if (typeof body.model === "string") patch.model = body.model.trim();
+    if (typeof body.apiKey === "string") patch.apiKey = body.apiKey.trim();
+    saveAgentConfig(db, patch);
+    return json(publicAgentConfig(db));
   }
 
   // ─── Strategy discovery ───

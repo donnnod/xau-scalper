@@ -8,12 +8,196 @@
  * engine without a click here.
  */
 
-import { Bot, CheckCircle2, Loader2, Send, User } from "lucide-react";
+import { Bot, CheckCircle2, KeyRound, Loader2, Send, User } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { type AgentProposal, type AgentTurn, ApiError, api } from "@/lib/api";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  type AgentConfig,
+  type AgentProposal,
+  type AgentProviderId,
+  type AgentTurn,
+  ApiError,
+  api,
+} from "@/lib/api";
+
+const PROVIDERS: Record<
+  AgentProviderId,
+  { label: string; baseUrl: string; model: string; keyUrl?: string }
+> = {
+  anthropic: {
+    label: "Anthropic (Claude)",
+    baseUrl: "",
+    model: "claude-opus-5",
+  },
+  groq: {
+    label: "Groq (free)",
+    baseUrl: "https://api.groq.com/openai/v1",
+    model: "llama-3.3-70b-versatile",
+    keyUrl: "https://console.groq.com/keys",
+  },
+  google: {
+    label: "Google Gemini (free)",
+    baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+    model: "gemini-2.5-flash",
+    keyUrl: "https://aistudio.google.com/apikey",
+  },
+  custom: { label: "Custom (OpenAI-compatible)", baseUrl: "", model: "" },
+};
+
+function ProviderSettings({
+  config,
+  onSaved,
+}: {
+  config: AgentConfig | null;
+  onSaved: (c: AgentConfig) => void;
+}) {
+  const [provider, setProvider] = useState<AgentProviderId>(
+    config?.provider ?? "anthropic",
+  );
+  const [baseUrl, setBaseUrl] = useState(config?.baseUrl ?? "");
+  const [model, setModel] = useState(config?.model ?? "");
+  const [apiKey, setApiKey] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (config) {
+      setProvider(config.provider);
+      setBaseUrl(config.baseUrl);
+      setModel(config.model);
+    }
+  }, [config]);
+
+  const pickProvider = (p: AgentProviderId) => {
+    setProvider(p);
+    setBaseUrl(PROVIDERS[p].baseUrl);
+    setModel(PROVIDERS[p].model);
+  };
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const saved = await api.saveAgentConfig({
+        provider,
+        baseUrl,
+        model,
+        apiKey: apiKey || undefined,
+      });
+      setApiKey("");
+      onSaved(saved);
+      toast.success("Provider settings saved.");
+    } catch (e) {
+      toast.error(
+        e instanceof ApiError ? e.message : "Could not save settings.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const keyUrl = PROVIDERS[provider].keyUrl;
+
+  return (
+    <details className="mb-3 shrink-0 rounded-lg border border-border bg-card">
+      <summary className="cursor-pointer px-3 py-2 text-xs flex items-center gap-2 text-muted-foreground hover:text-foreground">
+        <KeyRound className="h-3.5 w-3.5" />
+        Provider &amp; API key
+        <span className="ml-auto font-mono">
+          {config
+            ? `${PROVIDERS[config.provider]?.label ?? config.provider}${
+                config.hasKey ? " · key set" : " · no key"
+              }`
+            : "…"}
+        </span>
+      </summary>
+      <div className="p-3 pt-1 space-y-3">
+        <div className="grid gap-1.5">
+          <Label className="text-xs">Provider</Label>
+          <Select
+            value={provider}
+            onValueChange={v => pickProvider(v as AgentProviderId)}
+          >
+            <SelectTrigger className="h-8 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {(Object.keys(PROVIDERS) as AgentProviderId[]).map(p => (
+                <SelectItem key={p} value={p} className="text-xs">
+                  {PROVIDERS[p].label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        {(provider === "custom" || baseUrl) && (
+          <div className="grid gap-1.5">
+            <Label className="text-xs">Base URL</Label>
+            <Input
+              value={baseUrl}
+              onChange={e => setBaseUrl(e.target.value)}
+              placeholder="https://api.example.com/v1"
+              className="h-8 text-xs font-mono"
+              disabled={provider === "anthropic"}
+            />
+          </div>
+        )}
+
+        <div className="grid gap-1.5">
+          <Label className="text-xs">Model</Label>
+          <Input
+            value={model}
+            onChange={e => setModel(e.target.value)}
+            placeholder="model id"
+            className="h-8 text-xs font-mono"
+          />
+        </div>
+
+        <div className="grid gap-1.5">
+          <Label className="text-xs">
+            API key{" "}
+            {config?.hasKey && (
+              <span className="text-muted-foreground">
+                (leave blank to keep current)
+              </span>
+            )}
+          </Label>
+          <Input
+            type="password"
+            value={apiKey}
+            onChange={e => setApiKey(e.target.value)}
+            placeholder={config?.hasKey ? "••••••••" : "paste key"}
+            className="h-8 text-xs font-mono"
+          />
+          {keyUrl && (
+            <a
+              href={keyUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="text-[11px] text-[#7C5CFF] hover:underline"
+            >
+              Get a free key →
+            </a>
+          )}
+        </div>
+
+        <Button size="sm" className="h-7" onClick={save} disabled={saving}>
+          {saving && <Loader2 className="h-4 w-4 animate-spin" />}
+          Save
+        </Button>
+      </div>
+    </details>
+  );
+}
 
 interface ChatMessage {
   role: "user" | "assistant";
@@ -100,11 +284,19 @@ export function AgentPage() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [config, setConfig] = useState<AgentConfig | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  useEffect(() => {
+    api
+      .getAgentConfig()
+      .then(setConfig)
+      .catch(() => {});
+  }, []);
 
   const send = async (text: string) => {
     const trimmed = text.trim();
@@ -158,6 +350,8 @@ export function AgentPage() {
           </p>
         </div>
       </div>
+
+      <ProviderSettings config={config} onSaved={setConfig} />
 
       {/* Messages */}
       <div className="flex-1 min-h-0 overflow-y-auto space-y-4 pr-1">

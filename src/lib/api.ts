@@ -468,6 +468,15 @@ export interface AgentTurn {
   content: string;
 }
 
+export type AgentProviderId = "anthropic" | "groq" | "google" | "custom";
+
+export interface AgentConfig {
+  provider: AgentProviderId;
+  baseUrl: string;
+  model: string;
+  hasKey: boolean;
+}
+
 export type CandidateVerdict =
   | "qualified"
   | "too_few_trades"
@@ -621,6 +630,13 @@ export const api = {
   /** Send a message to the Strategy Assistant agent with prior chat history. */
   agentMessage: (message: string, history: AgentTurn[]) =>
     post<AgentResult>("/api/agent/message", { message, history }),
+  getAgentConfig: () => get<AgentConfig>("/api/agent/config"),
+  saveAgentConfig: (patch: {
+    provider?: AgentProviderId;
+    baseUrl?: string;
+    model?: string;
+    apiKey?: string;
+  }) => post<AgentConfig>("/api/agent/config", patch),
 
   researchRuns: () => get<{ runs: ResearchRun[] }>("/api/research/runs"),
   startResearch: (input: StartRunInput) =>

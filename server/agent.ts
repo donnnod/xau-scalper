@@ -1,14 +1,16 @@
 /**
- * The Strategy Assistant — a Claude-driven agent that can inspect the stored
+ * The Strategy Assistant — a model-driven agent that can inspect the stored
  * price history, run backtests, and propose a tuned strategy for a symbol.
+ *
+ * PROVIDERS: works with Anthropic (Claude) or any OpenAI-compatible endpoint
+ * — Groq and Google Gemini both expose one, so their free tiers work here, as
+ * does any custom base URL. The provider, model and key are configured from the
+ * UI and stored in the local settings table.
  *
  * SAFETY: the agent has NO write access. Its only "action" tool, propose_apply,
  * records a proposal and returns; it never touches the config. Applying a
  * strategy to the engine stays a human click in the UI (POST /api/backtest/apply),
  * so the agent can suggest but never arm anything on its own.
- *
- * The loop is hand-written rather than using the SDK tool runner: the tool set
- * is tiny and fixed, and owning the loop keeps the propose-only gate obvious.
  */
 
 import Anthropic from "@anthropic-ai/sdk";
@@ -41,8 +43,100 @@ export interface AgentResult {
   proposals: AgentProposal[];
 }
 
-const MODEL = "claude-opus-5";
+export type AgentProviderId = "anthropic" | "groq" | "google" | "custom";
+
+export interface AgentProviderConfig {
+  provider: AgentProviderId;
+  /** OpenAI-compatible base URL. Ignored for the anthropic provider. */
+  baseUrl: string;
+  model: string;
+  apiKey: string;
+}
+
+/** Defaults used to prefill the UI and to run each provider. */
+export const PROVIDER_DEFAULTS: Record<
+  AgentProviderId,
+  { label: string; baseUrl: string; model: string }
+> = {
+  anthropic: {
+    label: "Anthropic (Claude)",
+    baseUrl: "",
+    model: "claude-opus-5",
+  },
+  groq: {
+    label: "Groq (free)",
+    baseUrl: "https://api.groq.com/openai/v1",
+    model: "llama-3.3-70b-versatile",
+  },
+  google: {
+    label: "Google Gemini (free)",
+    baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+    model: "gemini-2.5-flash",
+  },
+  custom: { label: "Custom (OpenAI-compatible)", baseUrl: "", model: "" },
+};
+
+const SETTINGS_KEY = "agent:provider";
 const MAX_ITERATIONS = 10;
+
+/**
+ * The provider config in effect, from settings with an Anthropic env fallback.
+ *
+ * If nothing is saved (or the saved Anthropic entry has no key), fall back to
+ * ANTHROPIC_API_KEY so the app works out of the box when that env var is set.
+ */
+export function getAgentConfig(db: Db): AgentProviderConfig {
+  const saved = db.getSetting<AgentProviderConfig>(SETTINGS_KEY);
+  if (saved?.provider) {
+    if (saved.provider === "anthropic" && !saved.apiKey) {
+      return { ...saved, apiKey: process.env.ANTHROPIC_API_KEY ?? "" };
+    }
+    return saved;
+  }
+  return {
+    provider: "anthropic",
+    baseUrl: "",
+    model: PROVIDER_DEFAULTS.anthropic.model,
+    apiKey: process.env.ANTHROPIC_API_KEY ?? "",
+  };
+}
+
+/** Persist provider config. An empty apiKey keeps the previously-stored one. */
+export function saveAgentConfig(
+  db: Db,
+  patch: Partial<AgentProviderConfig>,
+): AgentProviderConfig {
+  const current = db.getSetting<AgentProviderConfig>(SETTINGS_KEY);
+  const provider = (patch.provider ??
+    current?.provider ??
+    "anthropic") as AgentProviderId;
+  const next: AgentProviderConfig = {
+    provider,
+    baseUrl:
+      patch.baseUrl ?? current?.baseUrl ?? PROVIDER_DEFAULTS[provider].baseUrl,
+    model: patch.model ?? current?.model ?? PROVIDER_DEFAULTS[provider].model,
+    // Only overwrite the key when a non-empty one is supplied.
+    apiKey: patch.apiKey ? patch.apiKey : (current?.apiKey ?? ""),
+  };
+  db.setSetting(SETTINGS_KEY, next);
+  return next;
+}
+
+/** The config with the key masked, safe to return to the UI. */
+export function publicAgentConfig(db: Db): {
+  provider: AgentProviderId;
+  baseUrl: string;
+  model: string;
+  hasKey: boolean;
+} {
+  const c = getAgentConfig(db);
+  return {
+    provider: c.provider,
+    baseUrl: c.baseUrl,
+    model: c.model,
+    hasKey: c.apiKey.length > 0,
+  };
+}
 
 /** Merge an untrusted partial config onto the defaults, numbers only. */
 function coerceConfig(raw: unknown): StrategyConfig {
@@ -72,31 +166,30 @@ How to work:
 - Keep replies concise and lead with the outcome. Show the key metrics you're comparing.
 - Only call propose_apply once you have a config you'd genuinely recommend, and summarise the evidence in its summary.`;
 
-const TOOLS: Anthropic.Tool[] = [
+/** Provider-neutral tool definition; `parameters` is a JSON Schema. */
+interface ToolDef {
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+}
+
+const TOOL_DEFS: ToolDef[] = [
   {
     name: "list_datasets",
     description:
       "List every stored price series (asset id, interval, bar count, date range). Uploaded files appear as upload:<SYMBOL>.",
-    input_schema: {
-      type: "object",
-      properties: {},
-      additionalProperties: false,
-    },
+    parameters: { type: "object", properties: {}, additionalProperties: false },
   },
   {
     name: "get_default_config",
     description: "Return the shipped default strategy parameters as an object.",
-    input_schema: {
-      type: "object",
-      properties: {},
-      additionalProperties: false,
-    },
+    parameters: { type: "object", properties: {}, additionalProperties: false },
   },
   {
     name: "run_backtest",
     description:
       "Backtest a strategy config over a stored dataset. Returns metrics: trades, winRate, netPoints, profitFactor, maxDrawdown, expectancyPerTrade, costPoints.",
-    input_schema: {
+    parameters: {
       type: "object",
       properties: {
         assetId: {
@@ -121,7 +214,7 @@ const TOOLS: Anthropic.Tool[] = [
     name: "propose_apply",
     description:
       "Record a tuned strategy for the user to review and approve. Does NOT apply anything.",
-    input_schema: {
+    parameters: {
       type: "object",
       properties: {
         symbol: {
@@ -213,43 +306,37 @@ function runTool(
   }
 }
 
-/**
- * Drive the agent to a final answer.
- *
- * `history` is the prior conversation (user/assistant text only). Throws if no
- * API key is configured, so the route can return a clear 400.
- */
-export async function runAgent(
+// ─── Anthropic (Claude) loop ───
+
+async function runAnthropic(
   db: Db,
+  cfg: AgentProviderConfig,
   history: AgentTurn[],
   message: string,
 ): Promise<AgentResult> {
-  if (!process.env.ANTHROPIC_API_KEY) {
-    throw new Error(
-      "ANTHROPIC_API_KEY is not set. Add it to the environment before using the agent.",
-    );
-  }
-  const client = new Anthropic();
+  const client = new Anthropic(cfg.apiKey ? { apiKey: cfg.apiKey } : {});
+  const tools: Anthropic.Tool[] = TOOL_DEFS.map(t => ({
+    name: t.name,
+    description: t.description,
+    // biome-ignore lint/suspicious/noExplicitAny: JSON Schema passthrough
+    input_schema: t.parameters as any,
+  }));
 
   const messages: Anthropic.MessageParam[] = [
     ...history.map(t => ({ role: t.role, content: t.content })),
     { role: "user" as const, content: message },
   ];
-
   const log: string[] = [];
   const proposals: AgentProposal[] = [];
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
     const response = await client.messages.create({
-      model: MODEL,
+      model: cfg.model,
       max_tokens: 8000,
       system: SYSTEM,
-      tools: TOOLS,
+      tools,
       messages,
     });
-
-    // Preserve the full assistant turn (including any thinking blocks) so the
-    // next request continues correctly.
     messages.push({ role: "assistant", content: response.content });
 
     if (response.stop_reason !== "tool_use") {
@@ -279,11 +366,128 @@ export async function runAgent(
     }
     messages.push({ role: "user", content: toolResults });
   }
-
   return {
-    reply:
-      "I hit the tool-call limit before finishing. Try narrowing the request.",
+    reply: "Hit the tool-call limit. Try narrowing the request.",
     log,
     proposals,
   };
+}
+
+// ─── OpenAI-compatible loop (Groq, Gemini, custom) ───
+
+interface OaiToolCall {
+  id: string;
+  function: { name: string; arguments: string };
+}
+interface OaiMessage {
+  role: "system" | "user" | "assistant" | "tool";
+  content?: string | null;
+  tool_calls?: OaiToolCall[];
+  tool_call_id?: string;
+}
+
+async function runOpenAICompatible(
+  db: Db,
+  cfg: AgentProviderConfig,
+  history: AgentTurn[],
+  message: string,
+): Promise<AgentResult> {
+  if (!cfg.baseUrl) throw new Error("This provider needs a base URL.");
+  if (!cfg.apiKey) throw new Error("No API key set for this provider.");
+  const url = `${cfg.baseUrl.replace(/\/$/, "")}/chat/completions`;
+  const tools = TOOL_DEFS.map(t => ({
+    type: "function" as const,
+    function: {
+      name: t.name,
+      description: t.description,
+      parameters: t.parameters,
+    },
+  }));
+
+  const messages: OaiMessage[] = [
+    { role: "system", content: SYSTEM },
+    ...history.map(t => ({ role: t.role, content: t.content })),
+    { role: "user" as const, content: message },
+  ];
+  const log: string[] = [];
+  const proposals: AgentProposal[] = [];
+
+  for (let i = 0; i < MAX_ITERATIONS; i++) {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${cfg.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: cfg.model,
+        max_tokens: 8000,
+        messages,
+        tools,
+        tool_choice: "auto",
+      }),
+    });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      throw new Error(
+        `Provider returned ${res.status}. ${detail.slice(0, 300)}`.trim(),
+      );
+    }
+    const data = (await res.json()) as {
+      choices?: Array<{ message?: OaiMessage }>;
+    };
+    const msg = data.choices?.[0]?.message;
+    if (!msg) throw new Error("Provider returned no message.");
+
+    messages.push(msg);
+
+    if (!msg.tool_calls || msg.tool_calls.length === 0) {
+      return { reply: (msg.content ?? "").trim(), log, proposals };
+    }
+
+    for (const call of msg.tool_calls) {
+      let input: Record<string, unknown> = {};
+      try {
+        input = call.function.arguments
+          ? (JSON.parse(call.function.arguments) as Record<string, unknown>)
+          : {};
+      } catch {
+        input = {};
+      }
+      const result = runTool(db, call.function.name, input, proposals, log);
+      messages.push({
+        role: "tool",
+        tool_call_id: call.id,
+        content: JSON.stringify(result),
+      });
+    }
+  }
+  return {
+    reply: "Hit the tool-call limit. Try narrowing the request.",
+    log,
+    proposals,
+  };
+}
+
+/**
+ * Drive the agent to a final answer using the configured provider.
+ *
+ * Throws (with a clear message) when no provider/key is configured, so the
+ * route can return a 502 the UI can display.
+ */
+export async function runAgent(
+  db: Db,
+  history: AgentTurn[],
+  message: string,
+): Promise<AgentResult> {
+  const cfg = getAgentConfig(db);
+  if (cfg.provider === "anthropic") {
+    if (!cfg.apiKey) {
+      throw new Error(
+        "No Anthropic key configured. Set one in the provider settings, or switch to Groq/Gemini.",
+      );
+    }
+    return runAnthropic(db, cfg, history, message);
+  }
+  return runOpenAICompatible(db, cfg, history, message);
 }
