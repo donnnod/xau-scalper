@@ -12,6 +12,11 @@
  */
 
 import { DEFAULT_ASSET_ID } from "../core/assets";
+import {
+  type BacktestModel,
+  computeMetrics,
+  runBacktest,
+} from "../core/backtest";
 import type { AssetConfig } from "../core/config";
 import {
   defaultConfig,
@@ -19,9 +24,19 @@ import {
   newAsset,
   toAssetDefinition,
 } from "../core/config";
+import type { CostModel } from "../core/costs";
+import { parseCandlesCsv } from "../core/csv";
 import { summariseByRegime } from "../core/memory";
 import { averageConcurrency, summarise } from "../core/portfolio";
 import { assessSignificance, effectiveSampleSize } from "../core/significance";
+import { DEFAULT_STRATEGY_CONFIG, type StrategyConfig } from "../core/strategy";
+import {
+  type AgentProviderId,
+  type AgentTurn,
+  publicAgentConfig,
+  runAgent,
+  saveAgentConfig,
+} from "./agent";
 import { ConfigError, ConfigStore } from "./config";
 import type { Db } from "./db";
 import { correlationsFrom, openExposures } from "./engine";
@@ -39,6 +54,52 @@ const json = (body: unknown, status = 200) =>
   });
 
 const bad = (message: string, status = 400) => json({ error: message }, status);
+
+/**
+ * Read the TeoExporter EA source for the download endpoint.
+ *
+ * Resolved at request time across the two layouts this server runs in: from
+ * source (`bun run start`, the file sits at repo-root/mt5) and compiled
+ * (`bun build --compile`, where import.meta.dir points into the binary's
+ * virtual filesystem and the assets live next to the executable). Returns null
+ * if no candidate exists rather than throwing, so a missing file is a clean
+ * 404 rather than a crashed request.
+ */
+async function readExporterSource(): Promise<string | null> {
+  const { dirname, join } = await import("node:path");
+  const candidates = [
+    join(import.meta.dir, "..", "mt5", "TeoExporter.mq5"),
+    join(dirname(process.execPath), "mt5", "TeoExporter.mq5"),
+    join(process.cwd(), "mt5", "TeoExporter.mq5"),
+  ];
+  for (const path of candidates) {
+    const file = Bun.file(path);
+    if (await file.exists()) return file.text();
+  }
+  return null;
+}
+
+/**
+ * Merge a possibly-partial, possibly-untrusted config object onto the defaults.
+ *
+ * Only the known StrategyConfig keys are read, and only when finite numbers, so
+ * a hand-edited payload from the tuning form can never inject stray fields or
+ * NaNs into a backtest. Cross-field coherence (TP1 < TP2, MACD fast < slow) is
+ * left to the config store's validator at apply time; a backtest tolerates an
+ * odd combination, it just scores it badly.
+ */
+function coerceStrategyConfig(raw: unknown): StrategyConfig {
+  const out: StrategyConfig = { ...DEFAULT_STRATEGY_CONFIG };
+  if (raw && typeof raw === "object") {
+    for (const key of Object.keys(DEFAULT_STRATEGY_CONFIG) as Array<
+      keyof StrategyConfig
+    >) {
+      const v = (raw as Record<string, unknown>)[key];
+      if (typeof v === "number" && Number.isFinite(v)) out[key] = v;
+    }
+  }
+  return out;
+}
 
 /** Parse a positive integer query param, clamped, with a default. */
 function intParam(
@@ -575,6 +636,184 @@ export async function handleApi(
     // MT5 hides its files under a hashed directory inside a Wine bottle.
     const dir = findExportDir();
     return json({ directory: dir, found: dir !== null });
+  }
+
+  // ─── The Expert Advisor download ───
+  //
+  // The Automation page hands the operator the exact EA the bridge expects,
+  // so there is never a version mismatch between the file they drag onto a
+  // chart and the order/spec format this server reads back.
+  if (path === "/api/mt5/exporter") {
+    const source = await readExporterSource();
+    if (source === null)
+      return bad("Exporter source not found on server.", 404);
+    return new Response(source, {
+      headers: {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Content-Disposition": 'attachment; filename="TeoExporter.mq5"',
+      },
+    });
+  }
+
+  // ─── Upload → backtest → tune → apply ───
+  //
+  // Bring your own history for any pair: upload a CSV, backtest the strategy on
+  // it, tune the parameters, and write the tuned config into the engine. The
+  // uploaded bars are stored under an `upload:<symbol>` id so a later re-run or
+  // chart never has to re-parse the file.
+  if (path === "/api/backtest/upload" && req.method === "POST") {
+    const symbol = (url.searchParams.get("symbol") ?? "").trim().toUpperCase();
+    const interval = url.searchParams.get("interval") ?? "15m";
+    if (!symbol) return bad("symbol query param is required");
+
+    const text = await req.text();
+    if (!text.trim()) return bad("the uploaded file was empty");
+
+    const { candles, skipped } = parseCandlesCsv(text);
+    if (candles.length < 100) {
+      return bad(
+        `Only ${candles.length} usable bars parsed (${skipped} rows skipped). Need at least 100 — is this an OHLC price export?`,
+      );
+    }
+
+    const assetId = `upload:${symbol}`;
+    db.saveCandles(assetId, interval, candles);
+    publish("candles");
+
+    return json({
+      assetId,
+      symbol,
+      interval,
+      bars: candles.length,
+      skipped,
+      from: candles[0].time,
+      to: candles[candles.length - 1].time,
+    });
+  }
+
+  if (path === "/api/backtest/run" && req.method === "POST") {
+    const body = await readBody(req);
+    if (body instanceof Response) return body;
+
+    const assetId = String(body.assetId ?? "");
+    const interval = String(body.interval ?? "15m");
+    if (!assetId) return bad("assetId is required");
+
+    const config = coerceStrategyConfig(body.config);
+    const precision = Number.isFinite(Number(body.precision))
+      ? Number(body.precision)
+      : 2;
+    const model = (
+      typeof body.model === "string" ? body.model : "combined"
+    ) as BacktestModel;
+    const costs =
+      body.costs && typeof body.costs === "object"
+        ? (body.costs as CostModel)
+        : undefined;
+
+    const candles = db.getCandles(assetId, interval, 1_000_000);
+    if (candles.length < 100) {
+      return bad(
+        `No usable history for ${assetId} ${interval} — upload a file first.`,
+      );
+    }
+
+    const trades = runBacktest(candles, config, precision, 60, costs, model);
+    return json({
+      metrics: computeMetrics(trades),
+      bars: candles.length,
+      from: candles[0].time,
+      to: candles[candles.length - 1].time,
+    });
+  }
+
+  if (path === "/api/backtest/apply" && req.method === "POST") {
+    const body = await readBody(req);
+    if (body instanceof Response) return body;
+
+    const symbol = String(body.symbol ?? "")
+      .trim()
+      .toUpperCase();
+    if (!symbol) return bad("symbol is required");
+
+    const config = coerceStrategyConfig(body.config);
+    const precision = Number.isFinite(Number(body.precision))
+      ? Number(body.precision)
+      : 2;
+
+    const existing = cfg.assets.find(a => a.id === symbol);
+    const asset: AssetConfig = existing
+      ? { ...existing, config, pricePrecision: precision }
+      : newAsset(symbol, {
+          displaySymbol: symbol,
+          dataSourceSymbol: symbol,
+          // Uploaded pairs have no live venue; the engine reads their bars from
+          // the MT5 bridge, so the operator points the terminal at this symbol.
+          dataSource: "mt5",
+          pricePrecision: precision,
+          config,
+          enabled: false,
+        });
+
+    const nextAssets = existing
+      ? cfg.assets.map(a => (a.id === symbol ? asset : a))
+      : [...cfg.assets, asset];
+
+    try {
+      store.save({ ...cfg, assets: nextAssets });
+    } catch (e) {
+      if (e instanceof ConfigError) return bad(e.message, 422);
+      throw e;
+    }
+    return json({ assetId: symbol, added: !existing });
+  }
+
+  // ─── Strategy Assistant (agent) ───
+  //
+  // The agent has read-only tools plus a propose-only apply; it can suggest a
+  // tuned strategy but never writes config. Applying stays the human click at
+  // /api/backtest/apply, which the UI wires to the agent's proposal.
+  if (path === "/api/agent/message" && req.method === "POST") {
+    const body = await readBody(req);
+    if (body instanceof Response) return body;
+    const message = String(body.message ?? "").trim();
+    if (!message) return bad("message is required");
+    const history = Array.isArray(body.history)
+      ? (body.history as AgentTurn[]).filter(
+          t =>
+            t &&
+            (t.role === "user" || t.role === "assistant") &&
+            typeof t.content === "string",
+        )
+      : [];
+    try {
+      const result = await runAgent(db, history, message);
+      return json(result);
+    } catch (e) {
+      return bad(e instanceof Error ? e.message : "Agent failed", 502);
+    }
+  }
+
+  if (path === "/api/agent/config" && req.method === "GET") {
+    return json(publicAgentConfig(db));
+  }
+
+  if (path === "/api/agent/config" && req.method === "POST") {
+    const body = await readBody(req);
+    if (body instanceof Response) return body;
+    const patch: {
+      provider?: AgentProviderId;
+      baseUrl?: string;
+      model?: string;
+      apiKey?: string;
+    } = {};
+    if (typeof body.provider === "string")
+      patch.provider = body.provider as AgentProviderId;
+    if (typeof body.baseUrl === "string") patch.baseUrl = body.baseUrl.trim();
+    if (typeof body.model === "string") patch.model = body.model.trim();
+    if (typeof body.apiKey === "string") patch.apiKey = body.apiKey.trim();
+    saveAgentConfig(db, patch);
+    return json(publicAgentConfig(db));
   }
 
   // ─── Strategy discovery ───

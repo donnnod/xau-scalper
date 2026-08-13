@@ -6,6 +6,11 @@ import {
   useMemo,
   useState,
 } from "react";
+import {
+  AssetSwitcher,
+  GOLD_ASSET,
+  type SelectedAsset,
+} from "@/components/dashboard/AssetSwitcher";
 import { LiquiditySweepPanel } from "@/components/dashboard/LiquiditySweepPanel";
 import { MacroCorrelation } from "@/components/dashboard/MacroCorrelation";
 import { MarketSessionBar } from "@/components/dashboard/MarketSessionBar";
@@ -32,6 +37,13 @@ import {
   fetchGoldPrice,
   type PriceData,
 } from "@/lib/priceApi";
+import {
+  emptyByTf,
+  TF_LABELS,
+  TF_SHOW_BB,
+  TIMEFRAMES,
+  type Timeframe,
+} from "@/lib/timeframes";
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Error Boundary — catches rendering crashes
@@ -45,7 +57,7 @@ class ErrorBoundary extends Component<
     this.state = { hasError: false, error: "" };
   }
   static getDerivedStateFromError(error: Error) {
-    return { hasError: true, error: error.message };
+    return { hasError: true, error: `${error.message}\n${error.stack ?? ""}` };
   }
   render() {
     if (this.state.hasError) {
@@ -54,9 +66,9 @@ class ErrorBoundary extends Component<
           <span className="text-lg font-mono text-[#D4A843]">
             ⚠ Dashboard Error
           </span>
-          <span className="text-sm text-muted-foreground text-center max-w-md">
+          <pre className="text-xs text-muted-foreground text-left max-w-2xl overflow-auto whitespace-pre-wrap">
             {this.state.error || "Something went wrong."}
-          </span>
+          </pre>
           <button
             onClick={() => {
               this.setState({ hasError: false, error: "" });
@@ -73,16 +85,28 @@ class ErrorBoundary extends Component<
   }
 }
 
-type Timeframe = "1m" | "3m" | "5m" | "15m";
-
 function DashboardContent() {
   const [priceData, setPriceData] = useState<PriceData | null>(null);
-  const [candles1m, setCandles1m] = useState<Candle[]>([]);
-  const [candles3m, setCandles3m] = useState<Candle[]>([]);
-  const [candles5m, setCandles5m] = useState<Candle[]>([]);
-  const [candles15m, setCandles15m] = useState<Candle[]>([]);
+  const [candlesByTf, setCandlesByTf] =
+    useState<Record<Timeframe, Candle[]>>(emptyByTf);
   const [activeTimeframe, setActiveTimeframe] = useState<Timeframe>("5m");
+  const [asset, setAsset] = useState<SelectedAsset>(GOLD_ASSET);
+  const assetId = asset.id;
+
+  const setTf = useCallback((tf: Timeframe, c: Candle[]) => {
+    setCandlesByTf(prev => ({ ...prev, [tf]: c }));
+  }, []);
   const [loading, setLoading] = useState(true);
+
+  // Switching asset clears the old candles and shows the skeleton, so the new
+  // instrument never renders on top of the previous one's chart data.
+  const selectAsset = useCallback((a: SelectedAsset) => {
+    setAsset(a);
+    setCandlesByTf(emptyByTf());
+    setPriceData(null);
+    setLoading(true);
+  }, []);
+
   const [refreshing, setRefreshing] = useState(false);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
   const [dataSource, setDataSource] = useState<string>("");
@@ -93,21 +117,15 @@ function DashboardContent() {
       try {
         if (showRefresh) setRefreshing(true);
         const [priceResult, candleResult] = await Promise.allSettled([
-          fetchGoldPrice(),
-          fetchGoldCandles(tf),
+          fetchGoldPrice(assetId),
+          fetchGoldCandles(tf, 200, assetId),
         ]);
         if (priceResult.status === "fulfilled") {
           setPriceData(priceResult.value);
           setDataSource(priceResult.value.source);
         }
         if (candleResult.status === "fulfilled") {
-          const setters: Record<Timeframe, (c: Candle[]) => void> = {
-            "1m": setCandles1m,
-            "3m": setCandles3m,
-            "5m": setCandles5m,
-            "15m": setCandles15m,
-          };
-          setters[tf](candleResult.value);
+          setTf(tf, candleResult.value);
         }
         setLastRefresh(new Date());
       } catch (err) {
@@ -117,56 +135,51 @@ function DashboardContent() {
         setRefreshing(false);
       }
     },
-    [],
+    [setTf, assetId],
   );
 
   // Phase 2: Background-load remaining timeframes (non-blocking)
-  const loadRemaining = useCallback(async (activeTf: Timeframe) => {
-    const allTfs: Timeframe[] = ["1m", "3m", "5m", "15m"];
-    const remaining = allTfs.filter(tf => tf !== activeTf);
-    const setters: Record<Timeframe, (c: Candle[]) => void> = {
-      "1m": setCandles1m,
-      "3m": setCandles3m,
-      "5m": setCandles5m,
-      "15m": setCandles15m,
-    };
-    const results = await Promise.allSettled(
-      remaining.map(tf => fetchGoldCandles(tf)),
-    );
-    remaining.forEach((tf, i) => {
-      if (results[i].status === "fulfilled") {
-        setters[tf]((results[i] as PromiseFulfilledResult<Candle[]>).value);
-      }
-    });
-  }, []);
+  const loadRemaining = useCallback(
+    async (activeTf: Timeframe) => {
+      const remaining = TIMEFRAMES.filter(tf => tf !== activeTf);
+      const results = await Promise.allSettled(
+        remaining.map(tf => fetchGoldCandles(tf, 200, assetId)),
+      );
+      remaining.forEach((tf, i) => {
+        const r = results[i];
+        if (r.status === "fulfilled") setTf(tf, r.value);
+      });
+    },
+    [setTf, assetId],
+  );
 
   // Full reload (for refresh button & interval)
-  const loadAll = useCallback(async (showRefresh = false) => {
-    try {
-      if (showRefresh) setRefreshing(true);
-      const [priceResult, c1, c3, c5, c15] = await Promise.allSettled([
-        fetchGoldPrice(),
-        fetchGoldCandles("1m"),
-        fetchGoldCandles("3m"),
-        fetchGoldCandles("5m"),
-        fetchGoldCandles("15m"),
-      ]);
-      if (priceResult.status === "fulfilled") {
-        setPriceData(priceResult.value);
-        setDataSource(priceResult.value.source);
+  const loadAll = useCallback(
+    async (showRefresh = false) => {
+      try {
+        if (showRefresh) setRefreshing(true);
+        const [priceResult, ...candleResults] = await Promise.allSettled([
+          fetchGoldPrice(assetId),
+          ...TIMEFRAMES.map(tf => fetchGoldCandles(tf, 200, assetId)),
+        ]);
+        if (priceResult.status === "fulfilled") {
+          setPriceData(priceResult.value);
+          setDataSource(priceResult.value.source);
+        }
+        TIMEFRAMES.forEach((tf, i) => {
+          const r = candleResults[i];
+          if (r.status === "fulfilled") setTf(tf, r.value);
+        });
+        setLastRefresh(new Date());
+      } catch (err) {
+        console.error("Failed to load data:", err);
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
       }
-      if (c1.status === "fulfilled") setCandles1m(c1.value);
-      if (c3.status === "fulfilled") setCandles3m(c3.value);
-      if (c5.status === "fulfilled") setCandles5m(c5.value);
-      if (c15.status === "fulfilled") setCandles15m(c15.value);
-      setLastRefresh(new Date());
-    } catch (err) {
-      console.error("Failed to load data:", err);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, []);
+    },
+    [setTf, assetId],
+  );
 
   // Initial mount: fast critical load, then background rest
   useEffect(() => {
@@ -176,44 +189,20 @@ function DashboardContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadRemaining, loadCritical, loadAll, activeTimeframe]);
 
-  const activeCandles =
-    activeTimeframe === "1m"
-      ? candles1m
-      : activeTimeframe === "3m"
-        ? candles3m
-        : activeTimeframe === "5m"
-          ? candles5m
-          : candles15m;
+  const activeCandles = candlesByTf[activeTimeframe];
 
   // Scalping analysis per timeframe — wrapped in try/catch for safety
-  const analysis1m = useMemo(() => {
-    try {
-      return analyzeForScalping(candles1m);
-    } catch {
-      return null;
+  const analysisByTf = useMemo(() => {
+    const out = {} as Record<Timeframe, ReturnType<typeof analyzeForScalping>>;
+    for (const tf of TIMEFRAMES) {
+      try {
+        out[tf] = analyzeForScalping(candlesByTf[tf]);
+      } catch {
+        out[tf] = null;
+      }
     }
-  }, [candles1m]);
-  const analysis3m = useMemo(() => {
-    try {
-      return analyzeForScalping(candles3m);
-    } catch {
-      return null;
-    }
-  }, [candles3m]);
-  const analysis5m = useMemo(() => {
-    try {
-      return analyzeForScalping(candles5m);
-    } catch {
-      return null;
-    }
-  }, [candles5m]);
-  const analysis15m = useMemo(() => {
-    try {
-      return analyzeForScalping(candles15m);
-    } catch {
-      return null;
-    }
-  }, [candles15m]);
+    return out;
+  }, [candlesByTf]);
 
   const signal = useMemo(() => {
     try {
@@ -240,14 +229,7 @@ function DashboardContent() {
     );
   }
 
-  const activeAnalysis =
-    activeTimeframe === "1m"
-      ? analysis1m
-      : activeTimeframe === "3m"
-        ? analysis3m
-        : activeTimeframe === "5m"
-          ? analysis5m
-          : analysis15m;
+  const activeAnalysis = analysisByTf[activeTimeframe];
 
   return (
     <div className="flex flex-col gap-3 p-3 sm:p-4 max-w-[1440px] mx-auto w-full min-w-0 overflow-hidden">
@@ -310,10 +292,17 @@ function DashboardContent() {
         </div>
       </div>
 
+      {/* Asset switcher — pick gold or any crypto */}
+      <AssetSwitcher selected={asset} onSelect={selectAsset} />
+
       {/* ④ Price Ticker + Refresh */}
       <div className="flex flex-col sm:flex-row gap-3">
         <div className="flex-1 min-w-0 overflow-hidden">
-          <PriceTicker data={priceData} />
+          <PriceTicker
+            data={priceData}
+            symbol={asset.symbol}
+            precision={asset.precision}
+          />
         </div>
         <div className="flex items-center gap-2 self-end sm:self-center flex-wrap min-w-0">
           {dataSource && (
@@ -368,41 +357,22 @@ function DashboardContent() {
 
       {/* ⑦ Scalping Bias & Entry/Exit Tool */}
       <ScalpingToolbar
-        analysis1m={analysis1m}
-        analysis3m={analysis3m}
-        analysis5m={analysis5m}
-        analysis15m={analysis15m}
+        analysis1m={analysisByTf["1m"]}
+        analysis3m={analysisByTf["3m"]}
+        analysis5m={analysisByTf["5m"]}
+        analysis15m={analysisByTf["15m"]}
         activeTimeframe={activeTimeframe}
+        activeAnalysis={activeAnalysis}
       />
 
-      {/* ⑤ Multi-TF Charts — 4 columns */}
+      {/* ⑤ Multi-TF Charts — 8 timeframes */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        {[
-          {
-            tf: "1m" as Timeframe,
-            label: "1 MIN",
-            candles: candles1m,
-            showBB: false,
-          },
-          {
-            tf: "3m" as Timeframe,
-            label: "3 MIN",
-            candles: candles3m,
-            showBB: false,
-          },
-          {
-            tf: "5m" as Timeframe,
-            label: "5 MIN",
-            candles: candles5m,
-            showBB: false,
-          },
-          {
-            tf: "15m" as Timeframe,
-            label: "15 MIN",
-            candles: candles15m,
-            showBB: true,
-          },
-        ].map(({ tf, label, candles, showBB }) => (
+        {TIMEFRAMES.map(tf => ({
+          tf,
+          label: TF_LABELS[tf],
+          candles: candlesByTf[tf],
+          showBB: TF_SHOW_BB[tf],
+        })).map(({ tf, label, candles, showBB }) => (
           <div
             key={tf}
             role="button"

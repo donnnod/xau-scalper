@@ -1,3 +1,7 @@
+export { AgentPage } from "./AgentPage";
+export { AutomationPage } from "./AutomationPage";
+export { ChartsPanelPage } from "./ChartsPanelPage";
+export { CryptoPage } from "./CryptoPage";
 export { default as DashboardPage } from "./DashboardPage";
 export { default as ExperimentalPage } from "./ExperimentalPage";
 export { PerformanceTrackerPage } from "./PerformanceTrackerPage";

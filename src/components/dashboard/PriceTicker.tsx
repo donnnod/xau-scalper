@@ -14,9 +14,18 @@ interface PriceData {
 interface PriceTickerProps {
   data: PriceData | null;
   loading?: boolean;
+  /** Display symbol, e.g. "XAU/USD" or "BTC/USD". */
+  symbol?: string;
+  /** Decimal places for price display. */
+  precision?: number;
 }
 
-export function PriceTicker({ data, loading }: PriceTickerProps) {
+export function PriceTicker({
+  data,
+  loading,
+  symbol = "XAU/USD",
+  precision = 2,
+}: PriceTickerProps) {
   const [flashClass, setFlashClass] = useState("");
   const prevPrice = useRef<number | null>(null);
 
@@ -54,11 +63,11 @@ export function PriceTicker({ data, loading }: PriceTickerProps) {
         <div className="flex items-center gap-2 shrink-0">
           <div className="w-2 h-2 rounded-full bg-[#D4A843] animate-pulse-dot" />
           <span className="text-xs font-medium text-muted-foreground tracking-wider uppercase">
-            XAU/USD
+            {symbol}
           </span>
         </div>
         <span className="text-2xl sm:text-3xl md:text-4xl font-bold tabular-nums font-mono tracking-tight">
-          {data.price.toFixed(2)}
+          {data.price.toFixed(precision)}
         </span>
         {/* Change — inline on mobile */}
         <div className="flex flex-col sm:hidden">
@@ -66,8 +75,8 @@ export function PriceTicker({ data, loading }: PriceTickerProps) {
             className={`text-xs font-semibold tabular-nums font-mono ${isPositive ? "text-[#00E676]" : "text-[#FF1744]"}`}
           >
             {isPositive ? "+" : ""}
-            {data.change24h.toFixed(2)} ({isPositive ? "+" : ""}
-            {data.changePct24h.toFixed(2)}%)
+            {data.change24h.toFixed(precision)} ({isPositive ? "+" : ""}
+            {data.changePct24h.toFixed(precision)}%)
           </span>
         </div>
       </div>
@@ -78,8 +87,8 @@ export function PriceTicker({ data, loading }: PriceTickerProps) {
           className={`text-sm font-semibold tabular-nums font-mono ${isPositive ? "text-[#00E676]" : "text-[#FF1744]"}`}
         >
           {isPositive ? "+" : ""}
-          {data.change24h.toFixed(2)} ({isPositive ? "+" : ""}
-          {data.changePct24h.toFixed(2)}%)
+          {data.change24h.toFixed(precision)} ({isPositive ? "+" : ""}
+          {data.changePct24h.toFixed(precision)}%)
         </span>
         <span className="text-xs text-muted-foreground">24h Change</span>
       </div>
@@ -89,13 +98,13 @@ export function PriceTicker({ data, loading }: PriceTickerProps) {
         <div className="flex flex-col items-center">
           <span className="text-[10px] text-muted-foreground mb-0.5">BID</span>
           <span className="text-xs sm:text-sm font-mono tabular-nums text-[#00E676]">
-            {data.bid.toFixed(2)}
+            {data.bid.toFixed(precision)}
           </span>
         </div>
         <div className="flex flex-col items-center">
           <span className="text-[10px] text-muted-foreground mb-0.5">ASK</span>
           <span className="text-xs sm:text-sm font-mono tabular-nums text-[#FF1744]">
-            {data.ask.toFixed(2)}
+            {data.ask.toFixed(precision)}
           </span>
         </div>
         <div className="flex flex-col items-center">
@@ -103,7 +112,7 @@ export function PriceTicker({ data, loading }: PriceTickerProps) {
             SPREAD
           </span>
           <span className="text-xs sm:text-sm font-mono tabular-nums text-[#D4A843]">
-            {spread.toFixed(2)}
+            {spread.toFixed(precision)}
           </span>
         </div>
         <div className="flex flex-col items-center">
@@ -111,7 +120,7 @@ export function PriceTicker({ data, loading }: PriceTickerProps) {
             24H HIGH
           </span>
           <span className="text-xs sm:text-sm font-mono tabular-nums">
-            {data.high24h.toFixed(2)}
+            {data.high24h.toFixed(precision)}
           </span>
         </div>
         <div className="flex flex-col items-center">
@@ -119,7 +128,7 @@ export function PriceTicker({ data, loading }: PriceTickerProps) {
             24H LOW
           </span>
           <span className="text-xs sm:text-sm font-mono tabular-nums">
-            {data.low24h.toFixed(2)}
+            {data.low24h.toFixed(precision)}
           </span>
         </div>
       </div>

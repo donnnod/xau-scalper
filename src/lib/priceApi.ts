@@ -103,24 +103,29 @@ const BINANCE_INTERVALS: Record<string, string> = {
   "3m": "3m",
   "5m": "5m",
   "15m": "15m",
+  "30m": "30m",
+  "1h": "1h",
+  "4h": "4h",
+  "1d": "1d",
 };
 
 export async function fetchGoldCandles(
   interval: string,
   limit = 200,
+  symbol = "PAXGUSDT",
 ): Promise<Candle[]> {
   const binanceInterval = BINANCE_INTERVALS[interval] || "5m";
   const base = apiBase();
 
   try {
-    const url = `${base}/api/klines?symbol=PAXGUSDT&interval=${binanceInterval}&limit=${limit}`;
+    const url = `${base}/api/klines?symbol=${encodeURIComponent(symbol)}&interval=${binanceInterval}&limit=${limit}`;
     const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
 
     if (!res.ok) throw new Error(`API returned ${res.status}`);
 
-    // The server returns parsed candles; the venue's array format does not
-    // leak past it.
-    return (await res.json()) as Candle[];
+    const data = await res.json();
+    if (!Array.isArray(data)) return [];
+    return data as Candle[];
   } catch (e: any) {
     console.error(`Failed to fetch candles (${interval}):`, e.message);
     throw e;

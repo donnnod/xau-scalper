@@ -165,7 +165,7 @@ describe("Research page", () => {
   test("renders the search form", async () => {
     render(<ResearchPage />);
     await waitFor(() => {
-      expect(screen.getByText(/what to search/i)).toBeTruthy();
+      expect(screen.getByText(/auto-download from metatrader 5/i)).toBeTruthy();
     });
   });
 

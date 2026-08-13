@@ -166,6 +166,38 @@ export class Db {
     })();
   }
 
+  /**
+   * Every distinct (asset, interval) candle series with its bar count and range.
+   *
+   * Lets the agent discover what history is available to backtest against —
+   * including uploaded files stored under `upload:<symbol>` — without the
+   * caller having to know the ids up front.
+   */
+  candleSeries(): Array<{
+    asset: string;
+    interval: string;
+    bars: number;
+    from: number;
+    to: number;
+  }> {
+    return this.raw
+      .query<
+        {
+          asset: string;
+          interval: string;
+          bars: number;
+          from: number;
+          to: number;
+        },
+        []
+      >(
+        `SELECT asset, interval, COUNT(*) AS bars,
+                MIN(open_time) AS "from", MAX(open_time) AS "to"
+         FROM candles GROUP BY asset, interval ORDER BY asset, interval`,
+      )
+      .all();
+  }
+
   /** Most recent `limit` candles, oldest-first (the order the strategy expects). */
   getCandles(asset: string, interval: string, limit = 200): Candle[] {
     const rows = this.raw

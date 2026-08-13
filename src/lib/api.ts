@@ -59,6 +59,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const get = <T>(path: string) => request<T>(path);
 export const post = <T>(path: string, body?: unknown) =>
   request<T>(path, { method: "POST", body: JSON.stringify(body ?? {}) });
+/** POST a raw string body (e.g. an uploaded CSV) rather than JSON. */
+export const postText = <T>(path: string, text: string) =>
+  request<T>(path, {
+    method: "POST",
+    body: text,
+    headers: { "Content-Type": "text/plain" },
+  });
 export const put = <T>(path: string, body?: unknown) =>
   request<T>(path, { method: "PUT", body: JSON.stringify(body ?? {}) });
 export const del = <T>(path: string) => request<T>(path, { method: "DELETE" });
@@ -250,6 +257,15 @@ export interface AssetInfo {
   dataSource: "binance" | "mt5";
 }
 
+export interface Ticker {
+  symbol: string;
+  price: number;
+  high24h: number;
+  low24h: number;
+  change24h: number;
+  changePct24h: number;
+}
+
 // ─── Configuration ───
 //
 // These mirror core/config.ts. Duplicated rather than imported because the UI
@@ -416,6 +432,51 @@ export interface BacktestMetrics {
   breakevenWinRate: number | null;
 }
 
+export interface UploadResult {
+  assetId: string;
+  symbol: string;
+  interval: string;
+  bars: number;
+  skipped: number;
+  from: number;
+  to: number;
+}
+
+export interface BacktestResult {
+  metrics: BacktestMetrics;
+  bars: number;
+  from: number;
+  to: number;
+}
+
+export interface AgentProposal {
+  symbol: string;
+  interval: string;
+  precision: number;
+  config: StrategyConfig;
+  summary: string;
+}
+
+export interface AgentResult {
+  reply: string;
+  log: string[];
+  proposals: AgentProposal[];
+}
+
+export interface AgentTurn {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export type AgentProviderId = "anthropic" | "groq" | "google" | "custom";
+
+export interface AgentConfig {
+  provider: AgentProviderId;
+  baseUrl: string;
+  model: string;
+  hasKey: boolean;
+}
+
 export type CandidateVerdict =
   | "qualified"
   | "too_few_trades"
@@ -510,6 +571,10 @@ export const api = {
 
   portfolio: () => get<Portfolio>("/api/portfolio"),
 
+  /** 24h ticker stats for the given asset ids (exchange-fed assets only). */
+  prices: (ids: string[]) =>
+    get<{ tickers: Ticker[] }>(`/api/prices${q({ symbols: ids.join(",") })}`),
+
   candles: (asset: string, interval = "5m", limit = 200) =>
     get<{ asset: string; interval: string; candles: Candle[] }>(
       `/api/candles${q({ asset, interval, limit })}`,
@@ -532,10 +597,46 @@ export const api = {
   defaultConfig: () => get<AppConfig>("/api/config/defaults"),
   resetConfig: () => post<AppConfig>("/api/config/reset"),
 
+  /** URL of the TeoExporter EA download, for a plain anchor link. */
+  mt5ExporterUrl: () => "/api/mt5/exporter",
+
   mt5Status: () => get<Mt5Status>("/api/mt5/status"),
   mt5Discover: () =>
     get<{ directory: string | null; found: boolean }>("/api/mt5/discover"),
   mt5Sync: () => post<Mt5SyncOutcome>("/api/mt5/sync"),
+
+  /** Upload an OHLC CSV for `symbol`; server stores it and reports the parse. */
+  uploadBacktestCsv: (symbol: string, interval: string, text: string) =>
+    postText<UploadResult>(
+      `/api/backtest/upload${q({ symbol, interval })}`,
+      text,
+    ),
+  /** Backtest one config against previously-uploaded (or stored) history. */
+  runBacktest: (input: {
+    assetId: string;
+    interval: string;
+    config: StrategyConfig;
+    precision?: number;
+    model?: string;
+  }) => post<BacktestResult>("/api/backtest/run", input),
+  /** Write a tuned config into the engine as an asset (disabled by default). */
+  applyStrategy: (input: {
+    symbol: string;
+    config: StrategyConfig;
+    precision?: number;
+    interval?: string;
+  }) => post<{ assetId: string; added: boolean }>("/api/backtest/apply", input),
+
+  /** Send a message to the Strategy Assistant agent with prior chat history. */
+  agentMessage: (message: string, history: AgentTurn[]) =>
+    post<AgentResult>("/api/agent/message", { message, history }),
+  getAgentConfig: () => get<AgentConfig>("/api/agent/config"),
+  saveAgentConfig: (patch: {
+    provider?: AgentProviderId;
+    baseUrl?: string;
+    model?: string;
+    apiKey?: string;
+  }) => post<AgentConfig>("/api/agent/config", patch),
 
   researchRuns: () => get<{ runs: ResearchRun[] }>("/api/research/runs"),
   startResearch: (input: StartRunInput) =>

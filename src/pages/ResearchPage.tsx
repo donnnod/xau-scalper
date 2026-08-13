@@ -27,6 +27,7 @@ import {
   Loader2,
   Search,
   Sparkles,
+  Upload,
   XCircle,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -59,12 +60,17 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { useLive } from "@/hooks/useLive";
 import {
   ApiError,
   api,
   type BacktestMetrics,
+  type BacktestResult,
   type DiscoveryCandidate,
+  type Mt5Status,
   type ResearchRun,
+  type StrategyConfig,
+  type UploadResult,
 } from "@/lib/api";
 
 const INTERVALS = ["1m", "5m", "15m", "30m", "1h", "4h", "1d"];
@@ -256,6 +262,335 @@ function CandidateCard({
   );
 }
 
+/** camelCase → "Camel case" for a readable field label. */
+function humanize(key: string): string {
+  const s = key.replace(/([A-Z])/g, " $1").replace(/^./, c => c.toUpperCase());
+  return s.trim();
+}
+
+function ConfigEditor({
+  config,
+  onChange,
+}: {
+  config: StrategyConfig;
+  onChange: (key: keyof StrategyConfig, value: number) => void;
+}) {
+  return (
+    <div className="grid gap-x-6 gap-y-2 sm:grid-cols-2 lg:grid-cols-3">
+      {(Object.keys(config) as Array<keyof StrategyConfig>).map(key => (
+        <div key={key} className="flex items-center justify-between gap-2">
+          <Label className="text-xs text-muted-foreground truncate" title={key}>
+            {humanize(key)}
+          </Label>
+          <Input
+            type="number"
+            step="any"
+            value={config[key]}
+            onChange={e => {
+              const n = Number(e.target.value);
+              if (Number.isFinite(n)) onChange(key, n);
+            }}
+            className="h-7 w-24 text-xs font-mono"
+          />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Bring-your-own-history: upload a CSV for any pair, backtest the strategy on
+ * it, tune the parameters, re-backtest, and apply the tuned config to the
+ * engine. This is the manual counterpart to the automatic search below — you
+ * supply the data and the idea, it scores and installs it.
+ */
+function UploadBacktest() {
+  const defaults = useLive(() => api.defaultConfig(), []);
+  const templateConfig = defaults?.assets[0]?.config ?? null;
+
+  const [symbol, setSymbol] = useState("");
+  const [interval, setInterval] = useState("15m");
+  const [precision, setPrecision] = useState(2);
+  const [config, setConfig] = useState<StrategyConfig | null>(null);
+  const [uploaded, setUploaded] = useState<UploadResult | null>(null);
+  const [result, setResult] = useState<BacktestResult | null>(null);
+  const [busy, setBusy] = useState<"upload" | "run" | "apply" | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [fileText, setFileText] = useState<string>("");
+  const [fileName, setFileName] = useState<string>("");
+
+  // Seed the editable config from the shipped defaults once they load.
+  const activeConfig = config ?? templateConfig;
+
+  const onFile = async (file: File | undefined) => {
+    if (!file) return;
+    setFileName(file.name);
+    setFileText(await file.text());
+    // Guess the symbol from the filename if the box is empty (e.g. EURUSD_M15.csv).
+    if (!symbol) {
+      const guess = file.name.replace(/\.[^.]+$/, "").split(/[_.-]/)[0];
+      if (guess) setSymbol(guess.toUpperCase());
+    }
+  };
+
+  const uploadAndRun = async () => {
+    if (!fileText) {
+      toast.error("Choose a CSV file first.");
+      return;
+    }
+    if (!symbol.trim()) {
+      toast.error("Enter a symbol name for this data.");
+      return;
+    }
+    if (!activeConfig) return;
+    setBusy("upload");
+    try {
+      const up = await api.uploadBacktestCsv(symbol.trim(), interval, fileText);
+      setUploaded(up);
+      const cfg = config ?? templateConfig;
+      if (cfg && !config) setConfig({ ...cfg });
+      const res = await api.runBacktest({
+        assetId: up.assetId,
+        interval: up.interval,
+        config: cfg ?? activeConfig,
+        precision,
+      });
+      setResult(res);
+      toast.success(
+        `Parsed ${up.bars} bars${up.skipped ? ` (${up.skipped} skipped)` : ""} and backtested.`,
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Upload failed");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const rerun = async () => {
+    if (!uploaded || !activeConfig) return;
+    setBusy("run");
+    try {
+      const res = await api.runBacktest({
+        assetId: uploaded.assetId,
+        interval: uploaded.interval,
+        config: activeConfig,
+        precision,
+      });
+      setResult(res);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Backtest failed");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const apply = async () => {
+    if (!uploaded || !activeConfig) return;
+    setBusy("apply");
+    try {
+      const { assetId, added } = await api.applyStrategy({
+        symbol: uploaded.symbol,
+        config: activeConfig,
+        precision,
+        interval: uploaded.interval,
+      });
+      toast.success(
+        added
+          ? `Added ${assetId} to the engine (disabled). Enable it in Settings and point MT5 at ${assetId} to trade it.`
+          : `Updated ${assetId}'s strategy. It takes effect on the next signal run.`,
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not apply");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base flex items-center gap-2">
+          <Upload className="h-4 w-4" />
+          Backtest your own file
+        </CardTitle>
+        <CardDescription>
+          Upload an OHLC CSV for any pair (MetaTrader, TradingView and Dukascopy
+          exports all work). It backtests with the default strategy, then you
+          can tune the parameters and apply the result to the engine.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {/* Upload row */}
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="space-y-1.5 sm:col-span-2 lg:col-span-1">
+            <Label className="text-xs font-medium">CSV file</Label>
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".csv,.txt,.tsv"
+              onChange={e => void onFile(e.target.files?.[0])}
+              className="block w-full text-xs file:mr-2 file:rounded-md file:border-0 file:bg-secondary file:px-2 file:py-1 file:text-xs file:text-foreground"
+            />
+            {fileName && (
+              <p className="text-[11px] text-muted-foreground truncate">
+                {fileName}
+              </p>
+            )}
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs font-medium">Symbol</Label>
+            <Input
+              value={symbol}
+              placeholder="e.g. EURUSD"
+              onChange={e => setSymbol(e.target.value.toUpperCase())}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs font-medium">Timeframe</Label>
+            <Select value={interval} onValueChange={setInterval}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {INTERVALS.map(i => (
+                  <SelectItem key={i} value={i}>
+                    {i}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs font-medium">Price decimals</Label>
+            <Input
+              type="number"
+              min={0}
+              max={8}
+              value={precision}
+              onChange={e => setPrecision(Number(e.target.value))}
+            />
+          </div>
+        </div>
+
+        <Button
+          onClick={uploadAndRun}
+          disabled={busy !== null || !activeConfig}
+        >
+          {busy === "upload" ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <Upload className="h-4 w-4" />
+          )}
+          Upload & backtest
+        </Button>
+
+        {/* Results */}
+        {result && uploaded && (
+          <div className="space-y-3 pt-1">
+            <Separator />
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm font-medium">
+                {uploaded.symbol} {uploaded.interval} · {result.bars} bars
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {toDateInput(result.from)} → {toDateInput(result.to)}
+              </p>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <MetricsColumn
+                title="Backtest result"
+                subtitle="The tuned strategy over the whole uploaded history, costs included."
+                metrics={result.metrics}
+                emphasis
+              />
+              <div className="rounded-lg border p-3 space-y-1 text-xs text-muted-foreground">
+                <p>
+                  Expectancy{" "}
+                  <span className="text-foreground font-mono">
+                    {result.metrics.expectancyPerTrade.toFixed(2)}
+                  </span>{" "}
+                  pts/trade
+                </p>
+                <p>
+                  Break-even win rate{" "}
+                  <span className="text-foreground font-mono">
+                    {result.metrics.breakevenWinRate === null
+                      ? "—"
+                      : `${result.metrics.breakevenWinRate.toFixed(1)}%`}
+                  </span>
+                </p>
+                <p className="pt-1 leading-snug">
+                  One pass over all the data — this is not the three-way,
+                  overfitting-guarded split the automatic search does below.
+                  Treat a great number here with suspicion.
+                </p>
+              </div>
+            </div>
+
+            {/* Tuning */}
+            {activeConfig && (
+              <details open className="text-sm">
+                <summary className="cursor-pointer font-medium">
+                  Tune parameters
+                </summary>
+                <div className="mt-3 space-y-3">
+                  <ConfigEditor
+                    config={activeConfig}
+                    onChange={(key, value) =>
+                      setConfig(prev => ({
+                        ...(prev ?? activeConfig),
+                        [key]: value,
+                      }))
+                    }
+                  />
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={rerun}
+                      disabled={busy !== null}
+                    >
+                      {busy === "run" ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Search className="h-4 w-4" />
+                      )}
+                      Re-run backtest
+                    </Button>
+                    {templateConfig && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setConfig({ ...templateConfig })}
+                        disabled={busy !== null}
+                      >
+                        Reset to defaults
+                      </Button>
+                    )}
+                    <Button
+                      size="sm"
+                      onClick={apply}
+                      disabled={busy !== null}
+                      className="ml-auto"
+                    >
+                      {busy === "apply" ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <CheckCircle2 className="h-4 w-4" />
+                      )}
+                      Apply to engine
+                    </Button>
+                  </div>
+                </div>
+              </details>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export function ResearchPage() {
   const [symbol, setSymbol] = useState("NAS100");
   const [interval, setIntervalValue] = useState("15m");
@@ -265,6 +600,7 @@ export function ResearchPage() {
   const [run, setRun] = useState<ResearchRun | null>(null);
   const [starting, setStarting] = useState(false);
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mt5 = useLive<Mt5Status>(() => api.mt5Status(), ["mt5", "config"]);
 
   // Polled rather than pushed over the event stream. A run reports progress
   // continuously for minutes, and broadcasting each tick to every connected tab
@@ -356,16 +692,60 @@ export function ResearchPage() {
         </p>
       </div>
 
+      <UploadBacktest />
+
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-base">What to search</CardTitle>
+          <CardTitle className="text-base">
+            Auto-download from MetaTrader 5 & search
+          </CardTitle>
           <CardDescription>
-            Use the symbol exactly as your broker spells it. Two years of 15m
-            bars is about 50,000 — enough for a three-way split to mean
-            something.
+            Pulls the history straight from your terminal (no file needed), then
+            runs the overfitting-guarded three-way search. Use the symbol
+            exactly as your broker spells it.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
+          {/* Live bridge status — the auto path can't work without it. */}
+          <div
+            className={`flex items-start gap-2 rounded-lg border px-3 py-2 text-xs ${
+              mt5?.connected
+                ? "border-emerald-600/40 bg-emerald-500/5 text-emerald-300"
+                : "border-amber-600/40 bg-amber-500/5 text-amber-200/90"
+            }`}
+          >
+            {mt5?.connected ? (
+              <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0 text-emerald-500" />
+            ) : (
+              <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-amber-500" />
+            )}
+            <div className="leading-snug">
+              {mt5?.connected ? (
+                <>
+                  MetaTrader 5 bridge connected
+                  {mt5.directory && (
+                    <span className="text-emerald-300/60 font-mono">
+                      {" "}
+                      · {mt5.directory}
+                    </span>
+                  )}
+                  . History requests will be answered by the terminal.
+                </>
+              ) : (
+                <>
+                  <span className="font-semibold">
+                    MetaTrader 5 bridge is not delivering data.
+                  </span>{" "}
+                  This auto-download search needs it. In MT5: attach{" "}
+                  <b>TeoExporter</b> to a chart, turn on <b>Algo Trading</b>,
+                  and leave <code>InpServeHistory = true</code>; then enable the{" "}
+                  <b>data bridge</b> on the Automation page. Or just use{" "}
+                  <b>Backtest your own file</b> above — no terminal required.
+                </>
+              )}
+            </div>
+          </div>
+
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
             <div className="space-y-1.5">
               <Label className="text-xs font-medium">Instrument</Label>

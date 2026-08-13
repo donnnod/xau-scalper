@@ -1,12 +1,16 @@
 import {
   BarChart3,
+  Bitcoin,
+  Bot,
   FlaskConical,
   LayoutDashboard,
+  LayoutGrid,
   Lightbulb,
   ScrollText,
   Settings,
   Shield,
   Sparkles,
+  Zap,
 } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 import { APP_NAME } from "@/lib/constants";
@@ -25,6 +29,8 @@ import {
 
 const mainNav = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/crypto", label: "Crypto", icon: Bitcoin },
+  { href: "/charts", label: "Charts Panel", icon: LayoutGrid },
   { href: "/experimental", label: "Experimental Lab", icon: FlaskConical },
 ];
 
@@ -39,6 +45,8 @@ const trackingNav = [
 ];
 
 const systemNav = [
+  { href: "/agent", label: "Strategy Assistant", icon: Bot },
+  { href: "/automation", label: "Automation", icon: Zap },
   { href: "/research", label: "Find Strategies", icon: Sparkles },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
