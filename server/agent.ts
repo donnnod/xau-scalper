@@ -101,6 +101,38 @@ export function getAgentConfig(db: Db): AgentProviderConfig {
   };
 }
 
+/**
+ * Clean a pasted model name.
+ *
+ * People copy the whole line from a `.env` example or a docs snippet, so the
+ * field arrives as `GEMINI_MODEL=gemini-2.0-flash` or `"gemini-2.0-flash"`.
+ * A real model id never contains `=`, a quote or whitespace, so strip an
+ * `NAME=` prefix, surrounding quotes and stray spaces rather than sending the
+ * junk to the provider (which answers with an opaque error).
+ */
+export function sanitizeModel(raw: string): string {
+  let m = raw.trim();
+  const eq = m.lastIndexOf("=");
+  if (eq !== -1) m = m.slice(eq + 1).trim();
+  return m.replace(/^["']|["']$/g, "").trim();
+}
+
+/**
+ * Clean a pasted OpenAI-compatible base URL.
+ *
+ * The base URL is the API root; the code appends `/chat/completions` itself.
+ * Users often paste the full endpoint, or a trailing slash, or quotes — trim
+ * all of that so `.../v1/chat/completions` and `.../v1/` both become `.../v1`.
+ */
+export function sanitizeBaseUrl(raw: string): string {
+  return raw
+    .trim()
+    .replace(/^["']|["']$/g, "")
+    .replace(/\/+$/, "")
+    .replace(/\/chat\/completions$/, "")
+    .replace(/\/+$/, "");
+}
+
 /** Persist provider config. An empty apiKey keeps the previously-stored one. */
 export function saveAgentConfig(
   db: Db,
@@ -110,13 +142,16 @@ export function saveAgentConfig(
   const provider = (patch.provider ??
     current?.provider ??
     "anthropic") as AgentProviderId;
+  const rawBaseUrl =
+    patch.baseUrl ?? current?.baseUrl ?? PROVIDER_DEFAULTS[provider].baseUrl;
+  const rawModel =
+    patch.model ?? current?.model ?? PROVIDER_DEFAULTS[provider].model;
   const next: AgentProviderConfig = {
     provider,
-    baseUrl:
-      patch.baseUrl ?? current?.baseUrl ?? PROVIDER_DEFAULTS[provider].baseUrl,
-    model: patch.model ?? current?.model ?? PROVIDER_DEFAULTS[provider].model,
+    baseUrl: sanitizeBaseUrl(rawBaseUrl),
+    model: sanitizeModel(rawModel),
     // Only overwrite the key when a non-empty one is supplied.
-    apiKey: patch.apiKey ? patch.apiKey : (current?.apiKey ?? ""),
+    apiKey: patch.apiKey ? patch.apiKey.trim() : (current?.apiKey ?? ""),
   };
   db.setSetting(SETTINGS_KEY, next);
   return next;
@@ -433,9 +468,22 @@ async function runOpenAICompatible(
         `Provider returned ${res.status}. ${detail.slice(0, 300)}`.trim(),
       );
     }
-    const data = (await res.json()) as {
-      choices?: Array<{ message?: OaiMessage }>;
-    };
+    // A wrong base URL (e.g. a web page rather than an API root) answers 200
+    // with HTML, and res.json() then throws a bare SyntaxError. Read the body
+    // as text first so the error can say what actually came back and point at
+    // the likely cause.
+    const body = await res.text();
+    let data: { choices?: Array<{ message?: OaiMessage }> };
+    try {
+      data = JSON.parse(body);
+    } catch {
+      const looksHtml = /^\s*</.test(body);
+      throw new Error(
+        looksHtml
+          ? `The endpoint at ${url} returned a web page, not JSON. Check the Base URL — it must be the OpenAI-compatible API root (e.g. https://generativelanguage.googleapis.com/v1beta/openai), not a browser page.`
+          : `The endpoint at ${url} did not return JSON: ${body.slice(0, 200)}`,
+      );
+    }
     const msg = data.choices?.[0]?.message;
     if (!msg) throw new Error("Provider returned no message.");
 
