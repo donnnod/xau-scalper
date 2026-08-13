@@ -1,0 +1,37 @@
+# systemd unit for running XAU Scalper as a background service on Linux.
+#
+# This is a TEMPLATE. The two __PLACEHOLDERS__ are filled in for you by
+# scripts/install-service.sh, which is the easy path:
+#
+#   ./scripts/install-service.sh          # per-user service (recommended)
+#   sudo ./scripts/install-service.sh --system   # system-wide service
+#
+# Or do it by hand: replace __USER__ and __WORKDIR__ below, copy this file to
+#   ~/.config/systemd/user/xau-scalper.service   (user)   or
+#   /etc/systemd/system/xau-scalper.service       (system, needs root)
+# then:
+#   systemctl --user daemon-reload && systemctl --user enable --now xau-scalper
+#
+# Configuration lives in the repo's .env.local (loaded via EnvironmentFile
+# below), so you never edit this unit to change host, port or database path.
+
+[Unit]
+Description=XAU Scalper — local trading dashboard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__WORKDIR__
+# .env.local is optional; systemd ignores a missing file thanks to the leading -.
+EnvironmentFile=-__WORKDIR__/.env.local
+ExecStart=__BUN__ run server/index.ts
+Restart=on-failure
+RestartSec=5
+# Give SSE clients and the DB checkpoint time to close cleanly on stop/restart.
+TimeoutStopSec=20
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=default.target
