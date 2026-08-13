@@ -132,6 +132,8 @@ a price that never existed.
 | Command | What it does |
 |---|---|
 | `bun run start` | The app. UI + API + engine on `127.0.0.1:4000`. |
+| `./scripts/install-linux.sh` | One-command setup on a fresh Linux box: installs Bun, deps, builds the UI. |
+| `./scripts/install-service.sh` | Install a systemd service so it runs in the background and on boot. |
 | `bun run serve` | Same, with `--watch` for development. |
 | `bun run dev` | Vite dev server for UI work only — needs `bun run start` alongside for data. |
 | `bun run build` | Typecheck then build the UI into `dist/`. |
@@ -162,6 +164,45 @@ Targets: `darwin-arm64`, `darwin-x64`, `linux-x64`, `linux-arm64`,
 `windows-x64`. Cross-compiling works, but a binary built on another platform
 cannot be run or signed there — verify on the target machine. macOS will refuse
 an unsigned bundle that arrived from elsewhere; built locally it just runs.
+
+### Linux server
+
+Nothing here is macOS-specific — the server is `Bun.serve` and the database is
+`bun:sqlite`, both of which run the same on any Linux distro. To stand it up on
+a headless box (a home server, a VPS, a Raspberry Pi), clone the repo and run:
+
+```bash
+./scripts/install-linux.sh     # installs Bun if missing, deps, builds the UI
+bun run start                  # → http://127.0.0.1:4000
+```
+
+`install-linux.sh` needs no root: it drops Bun into `~/.bun`, runs `bun
+install`, builds `dist/`, and seeds `.env.local` from the template on first run.
+Re-running it is safe.
+
+**Run it in the background and start it on boot** with the bundled systemd unit:
+
+```bash
+./scripts/install-service.sh              # per-user service, no root
+# or, to run regardless of who is logged in:
+sudo ./scripts/install-service.sh --system
+
+systemctl --user status xau-scalper       # (drop --user for a --system service)
+journalctl --user -u xau-scalper -f       # live logs
+```
+
+For a per-user service on a headless machine, enable lingering once so it keeps
+running when you are logged out: `sudo loginctl enable-linger "$USER"`.
+
+**Reaching it from the LAN.** By default the server binds `127.0.0.1`, so only
+this machine can talk to it. To open the dashboard from your phone or another
+computer, set `TEO_HOST=0.0.0.0` in `.env.local` and browse to
+`http://<server-ip>:4000`. There is **no authentication** — do this only on a
+network you trust, or put it behind a reverse proxy / VPN.
+
+Everything is driven by `.env.local` (host, port, database path — see
+`.env.example`), so you never edit the service unit to reconfigure. After
+changing `.env.local`, restart: `systemctl --user restart xau-scalper`.
 
 **Python is not required for the app.** The server, strategy, engine, backtest
 and cost model are all TypeScript and compile into the binary. `teo/` is an
