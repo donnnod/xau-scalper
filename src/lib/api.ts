@@ -59,6 +59,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const get = <T>(path: string) => request<T>(path);
 export const post = <T>(path: string, body?: unknown) =>
   request<T>(path, { method: "POST", body: JSON.stringify(body ?? {}) });
+/** POST a raw string body (e.g. an uploaded CSV) rather than JSON. */
+export const postText = <T>(path: string, text: string) =>
+  request<T>(path, {
+    method: "POST",
+    body: text,
+    headers: { "Content-Type": "text/plain" },
+  });
 export const put = <T>(path: string, body?: unknown) =>
   request<T>(path, { method: "PUT", body: JSON.stringify(body ?? {}) });
 export const del = <T>(path: string) => request<T>(path, { method: "DELETE" });
@@ -425,6 +432,23 @@ export interface BacktestMetrics {
   breakevenWinRate: number | null;
 }
 
+export interface UploadResult {
+  assetId: string;
+  symbol: string;
+  interval: string;
+  bars: number;
+  skipped: number;
+  from: number;
+  to: number;
+}
+
+export interface BacktestResult {
+  metrics: BacktestMetrics;
+  bars: number;
+  from: number;
+  to: number;
+}
+
 export type CandidateVerdict =
   | "qualified"
   | "too_few_trades"
@@ -552,6 +576,28 @@ export const api = {
   mt5Discover: () =>
     get<{ directory: string | null; found: boolean }>("/api/mt5/discover"),
   mt5Sync: () => post<Mt5SyncOutcome>("/api/mt5/sync"),
+
+  /** Upload an OHLC CSV for `symbol`; server stores it and reports the parse. */
+  uploadBacktestCsv: (symbol: string, interval: string, text: string) =>
+    postText<UploadResult>(
+      `/api/backtest/upload${q({ symbol, interval })}`,
+      text,
+    ),
+  /** Backtest one config against previously-uploaded (or stored) history. */
+  runBacktest: (input: {
+    assetId: string;
+    interval: string;
+    config: StrategyConfig;
+    precision?: number;
+    model?: string;
+  }) => post<BacktestResult>("/api/backtest/run", input),
+  /** Write a tuned config into the engine as an asset (disabled by default). */
+  applyStrategy: (input: {
+    symbol: string;
+    config: StrategyConfig;
+    precision?: number;
+    interval?: string;
+  }) => post<{ assetId: string; added: boolean }>("/api/backtest/apply", input),
 
   researchRuns: () => get<{ runs: ResearchRun[] }>("/api/research/runs"),
   startResearch: (input: StartRunInput) =>

@@ -12,6 +12,11 @@
  */
 
 import { DEFAULT_ASSET_ID } from "../core/assets";
+import {
+  type BacktestModel,
+  computeMetrics,
+  runBacktest,
+} from "../core/backtest";
 import type { AssetConfig } from "../core/config";
 import {
   defaultConfig,
@@ -19,9 +24,12 @@ import {
   newAsset,
   toAssetDefinition,
 } from "../core/config";
+import type { CostModel } from "../core/costs";
+import { parseCandlesCsv } from "../core/csv";
 import { summariseByRegime } from "../core/memory";
 import { averageConcurrency, summarise } from "../core/portfolio";
 import { assessSignificance, effectiveSampleSize } from "../core/significance";
+import { DEFAULT_STRATEGY_CONFIG, type StrategyConfig } from "../core/strategy";
 import { ConfigError, ConfigStore } from "./config";
 import type { Db } from "./db";
 import { correlationsFrom, openExposures } from "./engine";
@@ -62,6 +70,28 @@ async function readExporterSource(): Promise<string | null> {
     if (await file.exists()) return file.text();
   }
   return null;
+}
+
+/**
+ * Merge a possibly-partial, possibly-untrusted config object onto the defaults.
+ *
+ * Only the known StrategyConfig keys are read, and only when finite numbers, so
+ * a hand-edited payload from the tuning form can never inject stray fields or
+ * NaNs into a backtest. Cross-field coherence (TP1 < TP2, MACD fast < slow) is
+ * left to the config store's validator at apply time; a backtest tolerates an
+ * odd combination, it just scores it badly.
+ */
+function coerceStrategyConfig(raw: unknown): StrategyConfig {
+  const out: StrategyConfig = { ...DEFAULT_STRATEGY_CONFIG };
+  if (raw && typeof raw === "object") {
+    for (const key of Object.keys(DEFAULT_STRATEGY_CONFIG) as Array<
+      keyof StrategyConfig
+    >) {
+      const v = (raw as Record<string, unknown>)[key];
+      if (typeof v === "number" && Number.isFinite(v)) out[key] = v;
+    }
+  }
+  return out;
 }
 
 /** Parse a positive integer query param, clamped, with a default. */
@@ -616,6 +646,119 @@ export async function handleApi(
         "Content-Disposition": 'attachment; filename="TeoExporter.mq5"',
       },
     });
+  }
+
+  // ─── Upload → backtest → tune → apply ───
+  //
+  // Bring your own history for any pair: upload a CSV, backtest the strategy on
+  // it, tune the parameters, and write the tuned config into the engine. The
+  // uploaded bars are stored under an `upload:<symbol>` id so a later re-run or
+  // chart never has to re-parse the file.
+  if (path === "/api/backtest/upload" && req.method === "POST") {
+    const symbol = (url.searchParams.get("symbol") ?? "").trim().toUpperCase();
+    const interval = url.searchParams.get("interval") ?? "15m";
+    if (!symbol) return bad("symbol query param is required");
+
+    const text = await req.text();
+    if (!text.trim()) return bad("the uploaded file was empty");
+
+    const { candles, skipped } = parseCandlesCsv(text);
+    if (candles.length < 100) {
+      return bad(
+        `Only ${candles.length} usable bars parsed (${skipped} rows skipped). Need at least 100 — is this an OHLC price export?`,
+      );
+    }
+
+    const assetId = `upload:${symbol}`;
+    db.saveCandles(assetId, interval, candles);
+    publish("candles");
+
+    return json({
+      assetId,
+      symbol,
+      interval,
+      bars: candles.length,
+      skipped,
+      from: candles[0].time,
+      to: candles[candles.length - 1].time,
+    });
+  }
+
+  if (path === "/api/backtest/run" && req.method === "POST") {
+    const body = await readBody(req);
+    if (body instanceof Response) return body;
+
+    const assetId = String(body.assetId ?? "");
+    const interval = String(body.interval ?? "15m");
+    if (!assetId) return bad("assetId is required");
+
+    const config = coerceStrategyConfig(body.config);
+    const precision = Number.isFinite(Number(body.precision))
+      ? Number(body.precision)
+      : 2;
+    const model = (
+      typeof body.model === "string" ? body.model : "combined"
+    ) as BacktestModel;
+    const costs =
+      body.costs && typeof body.costs === "object"
+        ? (body.costs as CostModel)
+        : undefined;
+
+    const candles = db.getCandles(assetId, interval, 1_000_000);
+    if (candles.length < 100) {
+      return bad(
+        `No usable history for ${assetId} ${interval} — upload a file first.`,
+      );
+    }
+
+    const trades = runBacktest(candles, config, precision, 60, costs, model);
+    return json({
+      metrics: computeMetrics(trades),
+      bars: candles.length,
+      from: candles[0].time,
+      to: candles[candles.length - 1].time,
+    });
+  }
+
+  if (path === "/api/backtest/apply" && req.method === "POST") {
+    const body = await readBody(req);
+    if (body instanceof Response) return body;
+
+    const symbol = String(body.symbol ?? "")
+      .trim()
+      .toUpperCase();
+    if (!symbol) return bad("symbol is required");
+
+    const config = coerceStrategyConfig(body.config);
+    const precision = Number.isFinite(Number(body.precision))
+      ? Number(body.precision)
+      : 2;
+
+    const existing = cfg.assets.find(a => a.id === symbol);
+    const asset: AssetConfig = existing
+      ? { ...existing, config, pricePrecision: precision }
+      : newAsset(symbol, {
+          displaySymbol: symbol,
+          dataSourceSymbol: symbol,
+          // Uploaded pairs have no live venue; the engine reads their bars from
+          // the MT5 bridge, so the operator points the terminal at this symbol.
+          dataSource: "mt5",
+          pricePrecision: precision,
+          config,
+          enabled: false,
+        });
+
+    const nextAssets = existing
+      ? cfg.assets.map(a => (a.id === symbol ? asset : a))
+      : [...cfg.assets, asset];
+
+    try {
+      store.save({ ...cfg, assets: nextAssets });
+    } catch (e) {
+      if (e instanceof ConfigError) return bad(e.message, 422);
+      throw e;
+    }
+    return json({ assetId: symbol, added: !existing });
   }
 
   // ─── Strategy discovery ───
