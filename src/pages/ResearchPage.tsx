@@ -67,6 +67,7 @@ import {
   type BacktestMetrics,
   type BacktestResult,
   type DiscoveryCandidate,
+  type Mt5Status,
   type ResearchRun,
   type StrategyConfig,
   type UploadResult,
@@ -599,6 +600,7 @@ export function ResearchPage() {
   const [run, setRun] = useState<ResearchRun | null>(null);
   const [starting, setStarting] = useState(false);
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mt5 = useLive<Mt5Status>(() => api.mt5Status(), ["mt5", "config"]);
 
   // Polled rather than pushed over the event stream. A run reports progress
   // continuously for minutes, and broadcasting each tick to every connected tab
@@ -694,14 +696,56 @@ export function ResearchPage() {
 
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-base">What to search</CardTitle>
+          <CardTitle className="text-base">
+            Auto-download from MetaTrader 5 & search
+          </CardTitle>
           <CardDescription>
-            Use the symbol exactly as your broker spells it. Two years of 15m
-            bars is about 50,000 — enough for a three-way split to mean
-            something.
+            Pulls the history straight from your terminal (no file needed), then
+            runs the overfitting-guarded three-way search. Use the symbol
+            exactly as your broker spells it.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
+          {/* Live bridge status — the auto path can't work without it. */}
+          <div
+            className={`flex items-start gap-2 rounded-lg border px-3 py-2 text-xs ${
+              mt5?.connected
+                ? "border-emerald-600/40 bg-emerald-500/5 text-emerald-300"
+                : "border-amber-600/40 bg-amber-500/5 text-amber-200/90"
+            }`}
+          >
+            {mt5?.connected ? (
+              <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0 text-emerald-500" />
+            ) : (
+              <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-amber-500" />
+            )}
+            <div className="leading-snug">
+              {mt5?.connected ? (
+                <>
+                  MetaTrader 5 bridge connected
+                  {mt5.directory && (
+                    <span className="text-emerald-300/60 font-mono">
+                      {" "}
+                      · {mt5.directory}
+                    </span>
+                  )}
+                  . History requests will be answered by the terminal.
+                </>
+              ) : (
+                <>
+                  <span className="font-semibold">
+                    MetaTrader 5 bridge is not delivering data.
+                  </span>{" "}
+                  This auto-download search needs it. In MT5: attach{" "}
+                  <b>TeoExporter</b> to a chart, turn on <b>Algo Trading</b>,
+                  and leave <code>InpServeHistory = true</code>; then enable the{" "}
+                  <b>data bridge</b> on the Automation page. Or just use{" "}
+                  <b>Backtest your own file</b> above — no terminal required.
+                </>
+              )}
+            </div>
+          </div>
+
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
             <div className="space-y-1.5">
               <Label className="text-xs font-medium">Instrument</Label>

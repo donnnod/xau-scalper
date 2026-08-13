@@ -282,7 +282,8 @@ async function gatherCandles(
   // Ten minutes: a cold two-year pull genuinely takes several on a slow broker
   // connection, and failing at one minute would send the operator to look for
   // a bug that is really a download.
-  const deadline = Date.now() + 10 * 60_000;
+  const askedAt = Date.now();
+  const deadline = askedAt + 10 * 60_000;
   while (Date.now() < deadline) {
     if (cancelled.has(run.id)) {
       update(run, {
@@ -297,11 +298,21 @@ async function gatherCandles(
     if (state.status === "ready") break;
     if (state.status === "failed") throw new Error(state.message);
 
+    // A request that has been sitting unread for a while means the EA is not
+    // consuming it — the single most common support question. Rather than show
+    // the same "waiting" line for ten minutes, say what to check. The EA polls
+    // on its own timer (InpIntervalSecs, default 60s), so give it a grace
+    // period before crying wolf.
+    const stalled = state.status === "pending" && Date.now() - askedAt > 25_000;
+    const message = stalled
+      ? `MetaTrader 5 has not picked up the request for ${input.symbol}. Check: TeoExporter is on a chart with Algo Trading on, InpServeHistory = true, and "${input.symbol}" is in Market Watch (exact spelling). The EA polls every InpIntervalSecs (default 60s).`
+      : state.message;
+
     update(run, {
       status: "downloading",
       // The download occupies the first 40% of the bar; the search is the rest.
       progress: 0.05 + state.progress * 0.35,
-      message: state.message,
+      message,
     });
     await sleep(1000);
   }
