@@ -5,6 +5,7 @@ import { Toaster } from "./components/ui/sonner";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { TimezoneProvider } from "./contexts/TimezoneContext";
 import {
+  AgentPage,
   AutomationPage,
   ChartsPanelPage,
   CryptoPage,
@@ -37,6 +38,7 @@ function App() {
               <Route path="/crypto" element={<CryptoPage />} />
               <Route path="/charts" element={<ChartsPanelPage />} />
               <Route path="/research" element={<ResearchPage />} />
+              <Route path="/agent" element={<AgentPage />} />
               <Route path="/settings" element={<SettingsPage />} />
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />

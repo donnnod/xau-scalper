@@ -1,6 +1,7 @@
 import {
   BarChart3,
   Bitcoin,
+  Bot,
   FlaskConical,
   LayoutDashboard,
   LayoutGrid,
@@ -44,6 +45,7 @@ const trackingNav = [
 ];
 
 const systemNav = [
+  { href: "/agent", label: "Strategy Assistant", icon: Bot },
   { href: "/automation", label: "Automation", icon: Zap },
   { href: "/research", label: "Find Strategies", icon: Sparkles },
   { href: "/settings", label: "Settings", icon: Settings },

@@ -449,6 +449,25 @@ export interface BacktestResult {
   to: number;
 }
 
+export interface AgentProposal {
+  symbol: string;
+  interval: string;
+  precision: number;
+  config: StrategyConfig;
+  summary: string;
+}
+
+export interface AgentResult {
+  reply: string;
+  log: string[];
+  proposals: AgentProposal[];
+}
+
+export interface AgentTurn {
+  role: "user" | "assistant";
+  content: string;
+}
+
 export type CandidateVerdict =
   | "qualified"
   | "too_few_trades"
@@ -598,6 +617,10 @@ export const api = {
     precision?: number;
     interval?: string;
   }) => post<{ assetId: string; added: boolean }>("/api/backtest/apply", input),
+
+  /** Send a message to the Strategy Assistant agent with prior chat history. */
+  agentMessage: (message: string, history: AgentTurn[]) =>
+    post<AgentResult>("/api/agent/message", { message, history }),
 
   researchRuns: () => get<{ runs: ResearchRun[] }>("/api/research/runs"),
   startResearch: (input: StartRunInput) =>

@@ -30,6 +30,7 @@ import { summariseByRegime } from "../core/memory";
 import { averageConcurrency, summarise } from "../core/portfolio";
 import { assessSignificance, effectiveSampleSize } from "../core/significance";
 import { DEFAULT_STRATEGY_CONFIG, type StrategyConfig } from "../core/strategy";
+import { type AgentTurn, runAgent } from "./agent";
 import { ConfigError, ConfigStore } from "./config";
 import type { Db } from "./db";
 import { correlationsFrom, openExposures } from "./engine";
@@ -759,6 +760,32 @@ export async function handleApi(
       throw e;
     }
     return json({ assetId: symbol, added: !existing });
+  }
+
+  // ─── Strategy Assistant (agent) ───
+  //
+  // The agent has read-only tools plus a propose-only apply; it can suggest a
+  // tuned strategy but never writes config. Applying stays the human click at
+  // /api/backtest/apply, which the UI wires to the agent's proposal.
+  if (path === "/api/agent/message" && req.method === "POST") {
+    const body = await readBody(req);
+    if (body instanceof Response) return body;
+    const message = String(body.message ?? "").trim();
+    if (!message) return bad("message is required");
+    const history = Array.isArray(body.history)
+      ? (body.history as AgentTurn[]).filter(
+          t =>
+            t &&
+            (t.role === "user" || t.role === "assistant") &&
+            typeof t.content === "string",
+        )
+      : [];
+    try {
+      const result = await runAgent(db, history, message);
+      return json(result);
+    } catch (e) {
+      return bad(e instanceof Error ? e.message : "Agent failed", 502);
+    }
   }
 
   // ─── Strategy discovery ───
