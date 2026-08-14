@@ -6,6 +6,7 @@ import {
   LayoutDashboard,
   LayoutGrid,
   Lightbulb,
+  Network,
   ScrollText,
   Settings,
   Shield,
@@ -48,6 +49,7 @@ const systemNav = [
   { href: "/agent", label: "Strategy Assistant", icon: Bot },
   { href: "/automation", label: "Automation", icon: Zap },
   { href: "/research", label: "Find Strategies", icon: Sparkles },
+  { href: "/architecture", label: "Architecture", icon: Network },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 

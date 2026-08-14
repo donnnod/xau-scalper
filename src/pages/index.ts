@@ -1,4 +1,5 @@
 export { AgentPage } from "./AgentPage";
+export { ArchitecturePage } from "./ArchitecturePage";
 export { AutomationPage } from "./AutomationPage";
 export { ChartsPanelPage } from "./ChartsPanelPage";
 export { CryptoPage } from "./CryptoPage";
