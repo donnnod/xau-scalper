@@ -42,11 +42,18 @@ if [ ! -d "$ROOT/dist" ]; then
   exit 1
 fi
 
+# Render the unit. With a username argument (system mode) a `User=` line is
+# injected under [Service]; without one (user mode) it is omitted, because a
+# per-user unit must not carry User=.
 render() {
+  local user_line=""
+  if [ -n "${1:-}" ]; then
+    user_line="User=$1"
+  fi
   sed \
-    -e "s|__USER__|$1|g" \
     -e "s|__WORKDIR__|$ROOT|g" \
     -e "s|__BUN__|$BUN|g" \
+    -e "s|^\(\[Service\]\)$|\1${user_line:+\n$user_line}|" \
     "$SCRIPT_DIR/xau-scalper.service"
 }
 
@@ -69,7 +76,7 @@ if [ "$MODE" = "system" ]; then
 else
   DEST="$HOME/.config/systemd/user/xau-scalper.service"
   mkdir -p "$(dirname "$DEST")"
-  render "$USER" >"$DEST"
+  render >"$DEST"
   systemctl --user daemon-reload
   systemctl --user enable --now xau-scalper
   echo

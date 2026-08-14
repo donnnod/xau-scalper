@@ -1,14 +1,20 @@
 # systemd unit for running XAU Scalper as a background service on Linux.
 #
-# This is a TEMPLATE. The two __PLACEHOLDERS__ are filled in for you by
+# This is a TEMPLATE. The __PLACEHOLDERS__ are filled in for you by
 # scripts/install-service.sh, which is the easy path:
 #
 #   ./scripts/install-service.sh          # per-user service (recommended)
 #   sudo ./scripts/install-service.sh --system   # system-wide service
 #
-# Or do it by hand: replace __USER__ and __WORKDIR__ below, copy this file to
+# Note: a per-user service must NOT set User= (systemd runs it as you already),
+# while a system service must. The installer adds the User= line only for
+# --system, which is why it is not in this template.
+#
+# Or do it by hand: replace __WORKDIR__ and __BUN__ below, copy this file to
 #   ~/.config/systemd/user/xau-scalper.service   (user)   or
-#   /etc/systemd/system/xau-scalper.service       (system, needs root)
+#   /etc/systemd/system/xau-scalper.service       (system, needs root — and add
+#                                                   a `User=you` line under
+#                                                   [Service])
 # then:
 #   systemctl --user daemon-reload && systemctl --user enable --now xau-scalper
 #
@@ -22,7 +28,6 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=__USER__
 WorkingDirectory=__WORKDIR__
 # .env.local is optional; systemd ignores a missing file thanks to the leading -.
 EnvironmentFile=-__WORKDIR__/.env.local
