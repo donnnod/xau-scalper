@@ -49,6 +49,23 @@ describe("defaults", () => {
     expect(cfg.mt5.executionEnabled).toBe(false);
   });
 
+  test("MT5 auto-connect is on so a live terminal needs no manual toggle", () => {
+    const cfg = defaultConfig();
+    expect(cfg.mt5.autoConnect).toBe(true);
+    // Auto-connect enables reading only; execution stays off by default.
+    expect(cfg.mt5.enabled).toBe(false);
+    expect(cfg.mt5.executionEnabled).toBe(false);
+  });
+
+  test("a config stored before autoConnect existed gets it defaulted on", () => {
+    const legacy = defaultConfig();
+    // Simulate a document written before the field was added.
+    delete (legacy.mt5 as { autoConnect?: boolean }).autoConnect;
+    const merged = withDefaults(legacy);
+    expect(merged.mt5.autoConnect).toBe(true);
+    expect(validateConfig(merged)).toEqual([]);
+  });
+
   test("leave signal generation on, matching the previous behaviour", () => {
     expect(defaultConfig().engine.autoTradingEnabled).toBe(true);
   });

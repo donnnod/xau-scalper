@@ -93,6 +93,13 @@ export interface Mt5Config {
   /** Pull bars and specifications from a running terminal. */
   enabled: boolean;
   /**
+   * Turn `enabled` on by itself the moment a live terminal is exporting fresh
+   * data, so the operator gets ingest without visiting Settings first. It only
+   * ever enables reading — execution stays behind its own armed switch, which
+   * this never touches. On by default; set false to require the manual toggle.
+   */
+  autoConnect: boolean;
+  /**
    * The exporter's output directory. Empty means "discover it", which is what
    * the Settings page offers as a button rather than a thing to type.
    */
@@ -150,6 +157,7 @@ export function defaultConfig(): AppConfig {
     },
     mt5: {
       enabled: false,
+      autoConnect: true,
       directory: "",
       syncSeconds: 60,
       executionEnabled: false,
@@ -508,7 +516,7 @@ export function validateConfig(input: unknown): ValidationIssue[] {
   if (!mt5 || typeof mt5 !== "object") {
     issues.push({ path: "mt5", message: "must be an object" });
   } else {
-    for (const key of ["enabled", "executionEnabled"]) {
+    for (const key of ["enabled", "autoConnect", "executionEnabled"]) {
       if (typeof mt5[key] !== "boolean") {
         issues.push({ path: `mt5.${key}`, message: "must be true or false" });
       }

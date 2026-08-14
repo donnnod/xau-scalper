@@ -255,6 +255,36 @@ describe("sync diagnostics", () => {
     expect(status(db, cfg).lastError).toBe(out.errors[0]);
   });
 
+  // Auto-connect keys off exactly this: a fresh export must read as "connected"
+  // even while the bridge switch is still off, so the server loop can turn
+  // reading on by itself. If detection required enabled=true first, auto-connect
+  // could never fire.
+  test("a fresh export reads as connected even while the bridge is off", () => {
+    const now = 1_700_036_030_000; // 30s after the export below
+    write("XAUUSD_M5.json", exportFixture({ exportedAt: 1_700_036_000 }));
+
+    const cfg = defaultConfig();
+    cfg.mt5.enabled = false; // bridge not yet switched on
+    cfg.mt5.autoConnect = true;
+    cfg.mt5.directory = dir;
+
+    const st = status(db, cfg, now);
+    expect(st.found).toBe(true);
+    expect(st.connected).toBe(true);
+    expect(st.enabled).toBe(false); // still off — auto-connect hasn't run yet
+  });
+
+  test("a stale export does not read as connected", () => {
+    const now = 1_700_036_000_000 + 10 * 60_000; // 10 minutes later
+    write("XAUUSD_M5.json", exportFixture({ exportedAt: 1_700_036_000 }));
+
+    const cfg = defaultConfig();
+    cfg.mt5.autoConnect = true;
+    cfg.mt5.directory = dir;
+
+    expect(status(db, cfg, now).connected).toBe(false);
+  });
+
   test("a directory that does not exist is named", () => {
     const cfg = defaultConfig();
     cfg.mt5.enabled = true;

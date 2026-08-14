@@ -30,7 +30,7 @@ import { scanLiquiditySweeps } from "./intel/liquiditySweep";
 import { fetchMacroData } from "./intel/macroCorrelation";
 import { updateCalendar } from "./intel/newsCalendar";
 import { detectMarketRegime } from "./intel/regime";
-import { syncOnce } from "./mt5bridge";
+import { status as mt5Status, syncOnce } from "./mt5bridge";
 import { reconcileState } from "./reconciliation";
 import { RiskManager, riskConfigFromEnv } from "./risk-manager";
 import { runSelfHeal } from "./selfheal";
@@ -235,7 +235,25 @@ async function runSignals(): Promise<void> {
 
 /** Pull from MetaTrader 5, when the bridge is switched on. */
 async function runMt5(): Promise<void> {
-  const cfg = config.get();
+  let cfg = config.get();
+
+  // Auto-connect: if the bridge is off but a live terminal is already exporting
+  // fresh data, turn ingest on by itself so no Settings visit is needed. This
+  // enables READING only — executionEnabled is left exactly as it was, so live
+  // trading is never armed as a side effect. `connected` already means "an
+  // export exists and is fresh", so a closed terminal or a stale directory does
+  // not trip this.
+  if (!cfg.mt5.enabled && cfg.mt5.autoConnect) {
+    const st = mt5Status(db, cfg);
+    if (st.connected) {
+      cfg = config.save({ ...cfg, mt5: { ...cfg.mt5, enabled: true } });
+      console.log(
+        `[mt5] auto-connected to ${st.directory} — ingest enabled ` +
+          `(execution stays ${cfg.mt5.executionEnabled ? "armed" : "off"})`,
+      );
+    }
+  }
+
   if (!cfg.mt5.enabled) return;
   syncOnce(db, cfg, updater => {
     const live = config.get();

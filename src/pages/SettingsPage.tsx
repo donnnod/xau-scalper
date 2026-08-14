@@ -1061,6 +1061,17 @@ export function SettingsPage() {
                 }
               />
 
+              <ToggleRow
+                label="Connect automatically"
+                help="When the terminal is open and TeoExporter is exporting fresh data, turn reading on by itself — no need to flip the switch above. Never arms execution."
+                checked={draft.mt5.autoConnect}
+                onChange={v =>
+                  update(d => {
+                    d.mt5.autoConnect = v;
+                  })
+                }
+              />
+
               <div className="flex flex-wrap items-end gap-3">
                 <div className="flex-1 min-w-64">
                   <TextField

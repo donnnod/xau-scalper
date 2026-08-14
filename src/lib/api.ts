@@ -340,6 +340,7 @@ export interface AppConfig {
   };
   mt5: {
     enabled: boolean;
+    autoConnect: boolean;
     directory: string;
     syncSeconds: number;
     executionEnabled: boolean;
